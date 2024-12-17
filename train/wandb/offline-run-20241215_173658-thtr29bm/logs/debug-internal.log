@@ -1,0 +1,15 @@
+{"time":"2024-12-15T17:36:58.532140137Z","level":"INFO","msg":"using version","core version":"0.18.5"}
+{"time":"2024-12-15T17:36:58.532150354Z","level":"INFO","msg":"created symlink","path":"/root/idea/speculative_decoding/ssd_hand/train/wandb/offline-run-20241215_173658-thtr29bm/logs/debug-core.log"}
+{"time":"2024-12-15T17:36:58.633853976Z","level":"INFO","msg":"created new stream","id":"thtr29bm"}
+{"time":"2024-12-15T17:36:58.633865814Z","level":"INFO","msg":"stream: started","id":"thtr29bm"}
+{"time":"2024-12-15T17:36:58.633910778Z","level":"INFO","msg":"handler: started","stream_id":{"value":"thtr29bm"}}
+{"time":"2024-12-15T17:36:58.633948203Z","level":"INFO","msg":"sender: started","stream_id":"thtr29bm"}
+{"time":"2024-12-15T17:36:58.633947941Z","level":"INFO","msg":"writer: Do: started","stream_id":{"value":"thtr29bm"}}
+{"time":"2024-12-15T17:36:58.636848536Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2024-12-15T21:49:54.032932053Z","level":"INFO","msg":"stream: closing","id":"thtr29bm"}
+{"time":"2024-12-15T21:49:54.032950645Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2024-12-15T21:49:54.033470748Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2024-12-15T21:49:54.033581349Z","level":"INFO","msg":"handler: closed","stream_id":{"value":"thtr29bm"}}
+{"time":"2024-12-15T21:49:54.033595447Z","level":"INFO","msg":"writer: Close: closed","stream_id":{"value":"thtr29bm"}}
+{"time":"2024-12-15T21:49:54.033623161Z","level":"INFO","msg":"sender: closed","stream_id":"thtr29bm"}
+{"time":"2024-12-15T21:49:54.033627909Z","level":"INFO","msg":"stream: closed","id":"thtr29bm"}
