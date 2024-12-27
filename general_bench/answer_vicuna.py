@@ -179,9 +179,7 @@ def medusa_tree_generate(model, tokenizer, input_ids, max_new_tokens, max_seq_le
 
 def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
 
-    if "Llama-2" in model_name:
-        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
-    elif "vicuna" in model_name:
+    if "vicuna" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
 
     model.past_key_values = past_key_values
@@ -191,9 +189,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     model.current_length_data.zero_() # this is for rerun
 
     if attn:
-        if "Llama-2" in model_name:
-            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
-        elif "vicuna" in model_name:
+        if "vicuna" in model_name:
             past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
 
         model.past_key_values_attn = past_key_values_attn
@@ -281,9 +277,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
 
 def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
 
-    if "Llama-2" in model_name:
-        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
-    elif "vicuna" in model_name:
+    if "vicuna" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
 
     model.past_key_values = past_key_values
@@ -293,9 +287,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
     model.current_length_data.zero_() # this is for rerun
 
     if attn:
-        if "Llama-2" in model_name:
-            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
-        elif "vicuna" in model_name:
+        if "vicuna" in model_name:
             past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
 
         model.past_key_values_attn = past_key_values_attn
@@ -321,7 +313,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
         )
 
         ssd_logits, logits = initialize_ssd(
-            input_ids, model, ssd_buffers["ssd_attn_mask"], past_key_values, attn, past_key_values_attn
+            input_ids, model, ssd_buffers["ssd_attn_mask"], model.past_key_values, attn, model.past_key_values_attn
         )
 
         cur_length = input_len + 1
@@ -342,12 +334,12 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
             ssd_logits, logits = ssd_tree_decoding(
                 model,
                 tree_candidates,
-                past_key_values,
+                model.past_key_values,
                 ssd_buffers["ssd_position_ids"],
                 input_ids,
                 ssd_buffers["retrieve_indices"],
                 attn,
-                past_key_values_attn
+                model.past_key_values_attn
             )
 
             best_candidate, accept_length = evaluate_posterior(
@@ -363,11 +355,115 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
                 logits,
                 ssd_logits,
                 new_token,
-                past_key_values_data,
-                current_length_data,
+                model.past_key_values_data,
+                model.current_length_data,
                 attn,
-                past_key_values_data_attn,
-                current_length_data_attn
+                model.past_key_values_data_attn,
+                model.current_length_data_attn
+            )
+
+            accept_length_tree = input_ids.shape[1] - cur_length
+            # print(accept_length_tree, "acc")
+            cur_length = accept_length_tree + cur_length
+            accept_lengths_tree.append(accept_length_tree)
+            step += accept_length_tree
+            if tokenizer.eos_token_id in input_ids[0, input_len:] or cur_length + new_token >= max_seq_length:
+                break
+
+    # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
+
+    return input_ids, new_token
+
+def ssd_tree_generate_new(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+
+    if "vicuna" in model_name:
+        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
+
+    model.past_key_values = past_key_values
+    model.past_key_values_data = past_key_values_data
+    model.current_length_data = current_length_data
+
+    model.current_length_data.zero_() # this is for rerun
+
+    if attn:
+        if "vicuna" in model_name:
+            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
+
+        model.past_key_values_attn = past_key_values_attn
+        model.past_key_values_data_attn = past_key_values_data_attn
+        model.current_length_data_attn = current_length_data_attn
+
+        model.current_length_data_attn.zero_() # this is for rerun
+    
+    input_len = len(input_ids[0])
+    # print('Input token length:', len(input_ids[0]))
+    # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
+
+    # ssd_choices = ssd_vicuna_7b_v13_24_3
+
+    accept_lengths_tree = []
+    with torch.inference_mode():
+
+        new_token = 0
+
+        reset_ssd_mode(model, attn)
+
+        ssd_logits, logits, ssd_choices = initialize_ssd_tree(
+            input_ids, model, model.past_key_values, attn, model.past_key_values_attn
+        )
+
+        ssd_buffers = generate_ssd_buffers(
+            ssd_choices, device=model.device
+        )
+
+        initialize_ssd_mask(
+            model, ssd_buffers["ssd_attn_mask"], attn
+        )
+
+        cur_length = input_len + 1
+        accept_lengths_tree.append(1)
+        step = 0
+        for _ in range(max_new_tokens):
+
+            if step >= max_new_tokens:
+                break
+            
+            candidates, tree_candidates = generate_ssd_candidates(
+                ssd_logits,
+                logits,
+                ssd_buffers["tree_indices"],
+                ssd_buffers["retrieve_indices"],
+            )
+
+            ssd_logits, logits = ssd_tree_decoding(
+                model,
+                tree_candidates,
+                model.past_key_values,
+                ssd_buffers["ssd_position_ids"],
+                input_ids,
+                ssd_buffers["retrieve_indices"],
+                attn,
+                model.past_key_values_attn
+            )
+
+            best_candidate, accept_length = evaluate_posterior(
+                logits, candidates, temperature = 0, posterior_threshold = 0, posterior_alpha = 0.
+            )
+
+            input_ids, logits, ssd_logits, new_token = update_inference_inputs_ssd(
+                input_ids,
+                candidates,
+                best_candidate,
+                accept_length,
+                ssd_buffers["retrieve_indices"],
+                logits,
+                ssd_logits,
+                new_token,
+                model.past_key_values_data,
+                model.current_length_data,
+                attn,
+                model.past_key_values_data_attn,
+                model.current_length_data_attn
             )
 
             accept_length_tree = input_ids.shape[1] - cur_length
@@ -380,6 +476,116 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
     # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
 
     return input_ids, new_token
+
+from methods.ssd.model.utils_eagle import *
+
+def ssd_tree_generate_eagle(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+
+    max_seq_length=max_seq_length-model.total_tokens-10
+    input_ids = input_ids.clone()
+
+    TEM=0
+    temperature = TEM
+    if temperature > 1e-5:
+        logits_processor = prepare_logits_processor(temperature=temperature, top_p=0, top_k=0)
+    else:
+        logits_processor = None
+
+    if "vicuna" in model_name:
+        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
+
+    model.past_key_values = past_key_values
+    model.past_key_values_data = past_key_values_data
+    model.current_length_data = current_length_data
+
+    model.current_length_data.zero_() # this is for rerun
+
+    if attn:
+        if "vicuna" in model_name:
+            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
+
+        model.past_key_values_attn = past_key_values_attn
+        model.past_key_values_data_attn = past_key_values_data_attn
+        model.current_length_data_attn = current_length_data_attn
+
+        model.current_length_data_attn.zero_() # this is for rerun
+
+    # padding=(torch.zeros(1,1,dtype=torch.long)-1).to(input_ids.device)
+    padding=torch.zeros((1,1), dtype=torch.long, device=input_ids.device)
+    
+    input_len = len(input_ids[0])
+    # print('Input token length:', len(input_ids[0]))
+    # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
+
+    accept_lengths_tree = []
+    with torch.inference_mode():
+
+        new_token = 0
+
+        reset_ssd_mode_ea(model, attn)
+
+        draft_tokens, retrieve_indices,tree_mask,tree_position_ids, logits, hidden_states = initialize_ssd_ea_hid(
+            input_ids, model, logits_processor
+        )
+
+        cur_length = input_len + 1
+        accept_lengths_tree.append(1)
+        # step = 0
+        for _ in range(max_new_tokens):
+
+            # print(tree_mask)
+            # print(tree_mask.shape, "tree_mask")
+
+            model.base_model.model.ssd_mask = tree_mask
+            model.router.ssd_mask = tree_mask
+
+            draft_tokens=draft_tokens.to(input_ids.device)
+
+            logits, hidden_states_new = ssd_tree_decoding_ea_hid(
+                model,
+                draft_tokens,
+                tree_position_ids,
+                input_ids,
+                retrieve_indices,
+            )
+            
+            draft_tokens=torch.cat((draft_tokens, padding),dim=1)
+            candidates=draft_tokens[0,retrieve_indices]
+           
+            best_candidate, accept_length, sample_p = evaluate_posterior_ea(
+                logits, candidates, logits_processor=logits_processor
+            )
+
+            # candidates_ = [tokenizer.decode(candidate.tolist(), skip_special_tokens=True) for candidate in candidates]
+            # print(candidates_)
+
+            input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token = update_inference_inputs_ssd_ea_hid(
+                input_ids,
+                candidates,
+                best_candidate,
+                accept_length,
+                retrieve_indices,
+                new_token,
+                model,
+                hidden_states_new,
+                sample_p,
+                logits_processor
+            )
+
+            # print(tree_mask.shape, "tree_mask")
+
+            accept_length_tree = input_ids.shape[1] - cur_length
+            cur_length = accept_length_tree + cur_length
+            # print(accept_length_tree, "accept_length_tree")
+            accept_lengths_tree.append(accept_length_tree)
+            # step += accept_length_tree
+            if tokenizer.eos_token_id in input_ids[0, input_len:] or input_ids.shape[1] > max_seq_length or new_token > max_new_tokens:
+                break
+
+    # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
+
+    return input_ids, new_token
+
 
 def run_eval(
         model_name,
@@ -540,6 +746,17 @@ def get_model_answers(
                         attn,
                         device=device
                     )
+
+                    # output_ids, new_token = ssd_tree_generate_eagle(
+                    #     model,
+                    #     model_name,
+                    #     tokenizer,
+                    #     torch.as_tensor(input_ids).cuda(),
+                    #     max_new_token,
+                    #     max_seq_length,
+                    #     attn,
+                    #     device=device
+                    # )
                 
                 else:
 
@@ -663,6 +880,17 @@ def get_model_answers(
                                 attn,
                                 device=device
                             )
+
+                            # output_ids, new_token = ssd_tree_generate_eagle(
+                            #     model,
+                            #     model_name,
+                            #     tokenizer,
+                            #     torch.as_tensor(input_ids).cuda(),
+                            #     max_new_token,
+                            #     max_seq_length,
+                            #     attn,
+                            #     device=device
+                            # )
                         
                         else:
 
@@ -829,7 +1057,7 @@ if __name__ == "__main__":
     )
 
     # ssd
-    parser.add_argument("--ssd_name", type=str, required=False, help="Model name or path.", default='/root/idea/speculative_decoding/ssd_hand/train/ssd_models/vicuna-7b-v1.3_ssd_3_lr_0.002_dim_1024')
+    parser.add_argument("--ssd_name", type=str, required=False, help="Model name or path.", default='/root/idea/speculative_decoding/VASE/train/ssd_models/vicuna-7b-v1.3_ssd_3_lr_0.002_dim_1024')
     parser.add_argument("--attn", action='store_true', required=False, default=False)
 
     parser.add_argument("--medusa", action='store_true', required=False, default=False)
@@ -845,7 +1073,7 @@ if __name__ == "__main__":
 
     #     ray.init()
 
-    question_file = f"/root/idea/speculative_decoding/ssd_hand/evaluation/general_bench/data/{args.bench_name}/question.jsonl"
+    question_file = f"/root/idea/speculative_decoding/VASE/general_bench/data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:
