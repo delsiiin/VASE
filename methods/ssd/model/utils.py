@@ -1,6 +1,9 @@
 import torch
 from transformers import top_k_top_p_filtering
+from collections import deque
 import torch.nn.functional as F
+
+import copy
 
 TOPK=10 # topk for sparse tree (10 is a placeholder and it is sufficient)
 
@@ -157,6 +160,72 @@ def initialize_ssd(input_ids, model, ssd_attn_mask, past_key_values, attn, past_
 
     return ssd_logits, logits
 
+def initialize_ssd_tree(input_ids, model, past_key_values, attn, past_key_values_attn):
+
+    if attn:
+        ssd_logits, _, logits = model(
+        input_ids, past_key_values=past_key_values, past_key_values_attn=past_key_values_attn, output_orig=True
+    )
+        
+    candidates_prob = F.softmax(torch.topk(ssd_logits[:, 0, -1], TOPK, dim = -1).values, dim=-1)
+
+    def get_node_expectation(accuracies, node):
+        expectation = copy.deepcopy(accuracies[0, node[0]])
+        for i in range(1, len(node)):
+            expectation *= accuracies[i, node[i]]
+        return expectation
+
+    def explore_graph(accuracies, max_depth, max_child, num_iterations):
+        explored_nodes = {}
+        accept_nodes = [tuple([0])]
+        expectations = get_node_expectation(accuracies, accept_nodes[0])
+        explored_nodes[tuple(accept_nodes[0])] = expectations
+
+        # print(accuracies.shape)
+        
+        for _ in range(num_iterations):
+            # find neighbors
+            neighbors = []
+            for node in accept_nodes:
+                # next node in same layer
+                if node[-1] < max_child[len(node) - 1] - 1:
+                    neighbor = list(copy.deepcopy(node))
+                    neighbor[-1] = neighbor[-1] + 1
+                    neighbors.append(neighbor)
+                # next node in next layer
+                if len(node) < max_depth:
+                    neighbor = list(copy.deepcopy(node))
+                    neighbor.append(0)
+                    neighbors.append(neighbor)
+                    
+            # find the best neighbor
+            best_neighbor = None
+            best_neighbor_expectation = 0
+            for neighbor in neighbors:
+                if tuple(neighbor) in accept_nodes:
+                    continue
+                if tuple(neighbor) in explored_nodes:
+                    neighbor_expectation = explored_nodes[tuple(neighbor)]
+                else:
+                    neighbor_expectation = get_node_expectation(accuracies, neighbor)
+                    explored_nodes[tuple(neighbor)] = neighbor_expectation
+                if neighbor_expectation > best_neighbor_expectation:
+                    best_neighbor = neighbor
+                    best_neighbor_expectation = neighbor_expectation
+            accept_nodes.append(tuple(best_neighbor))
+            expectations += best_neighbor_expectation
+            
+        return accept_nodes
+    
+    accept_nodes = explore_graph(candidates_prob, model.config.top_k_group, [TOPK]*model.config.top_k_group, 24)
+        
+    return ssd_logits, logits, accept_nodes
+
+def initialize_ssd_mask(model, ssd_attn_mask, attn):
+
+    model.base_model.model.ssd_mask = ssd_attn_mask
+    if attn:
+        model.router.ssd_mask = ssd_attn_mask
 
 def reset_ssd_mode(
     model, attn
@@ -254,7 +323,6 @@ def generate_ssd_candidates(ssd_logits, logits, tree_indices, retrieve_indices, 
     tree_candidates = tree_candidates.unsqueeze(0)
     return cart_candidates, tree_candidates
 
-
 def ssd_tree_decoding(
     model,
     tree_candidates,
@@ -298,30 +366,6 @@ def ssd_tree_decoding(
     logits = tree_logits[0, retrieve_indices]
     ssd_logits = tree_ssd_logits[:, 0, retrieve_indices]
     return ssd_logits, logits
-
-def sample(logits, return_probs: bool=False, do_sample: bool=False, top_k: int=50, top_p: float=0.7, temperature: float=0.7):
-
-    if return_probs:
-
-        all_probs = logits.softmax(-1)
-        if do_sample and top_k != 1 and top_p != 0.0 and temperature != 0.0:
-            _logits = top_k_top_p_filtering(logits.view(-1, logits.size(-1)) / temperature, top_k=top_k, top_p=top_p)
-            output_ids = torch.multinomial(_logits.softmax(-1), num_samples=1).view(logits.shape[:-1])
-            probs = torch.gather(all_probs, -1, output_ids.unsqueeze(-1)).squeeze(-1)
-        else:
-            probs, output_ids = torch.max(all_probs, dim=-1)
-            
-        return output_ids, probs
-
-    else:
-
-        if do_sample and top_k != 1 and top_p != 0.0 and temperature != 0.0:
-            _logits = top_k_top_p_filtering(logits.view(-1, logits.size(-1)) / temperature, top_k=top_k, top_p=top_p)
-            output_ids = torch.multinomial(_logits.softmax(-1), num_samples=1).view(logits.shape[:-1])
-        else:
-            output_ids = torch.argmax(logits, dim=-1)
-            
-        return output_ids
     
 def get_nucleus_one_token(logit, temperature, top_p):
     """

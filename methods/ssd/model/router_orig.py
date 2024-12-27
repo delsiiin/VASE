@@ -263,7 +263,6 @@ class LlamaAttention(nn.Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         padding_mask: Optional[torch.LongTensor] = None,
-        last_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -286,12 +285,8 @@ class LlamaAttention(nn.Module):
 
         else:
             query_states = self.q_proj(hidden_states)
-            if last_hidden_states is None:
-                key_states = self.k_proj(hidden_states)
-                value_states = self.v_proj(hidden_states)
-            else:
-                key_states = self.k_proj(last_hidden_states)
-                value_states = self.v_proj(last_hidden_states)
+            key_states = self.k_proj(hidden_states)
+            value_states = self.v_proj(hidden_states)
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -560,7 +555,6 @@ class LlamaDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         padding_mask: Optional[torch.LongTensor] = None,
-        last_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -579,8 +573,6 @@ class LlamaDecoderLayer(nn.Module):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
-        if last_hidden_states is not None:
-            last_hidden_states = self.input_layernorm(last_hidden_states)
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -591,7 +583,6 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             padding_mask=padding_mask,
             use_cache=use_cache,
-            last_hidden_states=last_hidden_states,
         )
         
         hidden_states = residual + hidden_states
@@ -684,8 +675,6 @@ class RouterModel(LlamaPreTrainedModel):
         self.layers = nn.ModuleList([LlamaDecoderLayer(config, layer_idx, attn_hid_dim) for layer_idx in range(config.top_k_group)])
         self.norm = LlamaRMSNorm(attn_hid_dim, eps=config.rms_norm_eps)
 
-        self.noise_alpha = 75
-
         # self.router = NoisyTopkRouter(config.hidden_size, config.num_hidden_layers - config.top_layers_len, config.top_k)
 
         self.gradient_checkpointing = False
@@ -726,6 +715,7 @@ class RouterModel(LlamaPreTrainedModel):
         #         if self.ssd_mode == "debug":
         #             torch.save(combined_attention_mask, "ssd_mask.pt")
 
+        # [MODIFIED] add medusa mask
         if hasattr(self, "ssd_mask") and self.ssd_mask is not None:
             ssd_mask = self.ssd_mask
             _, _, shape0, shape1 = ssd_mask.shape
@@ -817,40 +807,25 @@ class RouterModel(LlamaPreTrainedModel):
 
         # print(draft_attn_skip_masks, draft_mlp_skip_masks)
 
-        inputs_embeds = self.resnet_block(inputs_embeds)
+        if self.resnet_block is not None:
+            inputs_embeds = self.resnet_block(inputs_embeds)
 
         inputs_embeds = self.down_proj(inputs_embeds)
 
         all_draft_hidden_states = []
-
-        # if self.training:
-        #     model_dim = inputs_embeds.shape[-1]
-        #     seq_len = (input_ids != 0).sum(dim=-1).clamp(min=1).unsqueeze(1).unsqueeze(2) # tokenizer.pad_token_id1
-        #     denom = torch.sqrt(seq_len * model_dim)
-
-        #     noise = (torch.rand_like(inputs_embeds) * 2 - 1) * self.noise_alpha / denom
-        #     noise = noise.to(inputs_embeds.dtype)
-        #     inputs_embeds = inputs_embeds + noise
         
         for idx, decoder_layer in enumerate(self.layers):
 
             hidden_states = inputs_embeds
-
-            # print(inputs_embeds.shape)
-
-            # hidden_states = torch.roll(inputs_embeds, shifts=-(idx), dims=1)
     
             past_key_value = past_key_values[idx] if past_key_values is not None else None
-
-            if idx == 0:
-                last_hidden_states = None
 
             if self.gradient_checkpointing and self.training:
                     
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
                         # None for past_key_value
-                        return module(*inputs, past_key_value, output_attentions, padding_mask=padding_mask, last_hidden_states=last_hidden_states)
+                        return module(*inputs, past_key_value, output_attentions, padding_mask=padding_mask)
 
                     return custom_forward
             
@@ -868,7 +843,6 @@ class RouterModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     padding_mask=padding_mask,
-                    last_hidden_states=last_hidden_states
                 )
 
             hidden_states = layer_outputs[0]
@@ -877,8 +851,6 @@ class RouterModel(LlamaPreTrainedModel):
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
 
             hidden_states = self.norm(hidden_states)
-
-            last_hidden_states = hidden_states
 
             all_draft_hidden_states.append(hidden_states)
 

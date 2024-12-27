@@ -826,10 +826,24 @@ class LlamaModel(LlamaPreTrainedModel):
             )
 
         # [MODIFIED] add medusa mask
+        # if hasattr(self, "ssd_mask") and self.ssd_mask is not None:
+        #     ssd_mask = self.ssd_mask
+        #     ssd_len = ssd_mask.size(-1)
+        #     combined_attention_mask[:, :, -ssd_len:, -ssd_len:][
+        #         ssd_mask == 0
+        #     ] = combined_attention_mask.min()
+        #     if hasattr(self, "ssd_mode"):
+        #         # debug mode
+        #         if self.ssd_mode == "debug":
+        #             torch.save(combined_attention_mask, "ssd_mask.pt")
+
+        # print(combined_attention_mask.shape, "combined_attention_mask")
+
+        # [MODIFIED] add medusa mask
         if hasattr(self, "ssd_mask") and self.ssd_mask is not None:
             ssd_mask = self.ssd_mask
-            ssd_len = ssd_mask.size(-1)
-            combined_attention_mask[:, :, -ssd_len:, -ssd_len:][
+            _, _, shape0, shape1 = ssd_mask.shape
+            combined_attention_mask[:, :, -shape0:, -shape1:][
                 ssd_mask == 0
             ] = combined_attention_mask.min()
             if hasattr(self, "ssd_mode"):

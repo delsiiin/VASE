@@ -101,7 +101,7 @@ class SSDModel(nn.Module):
         hidden_states = outputs[0].clone()
 
         all_draft_hidden_states = self.router(
-            hidden_states,
+            inputs_embeds=hidden_states,
             attention_mask=attention_mask,
             past_key_values=past_key_values_attn,
             position_ids=position_ids,
