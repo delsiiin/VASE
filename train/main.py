@@ -656,8 +656,9 @@ def train():
         bnb_4bit_quant_type="nf4",
     )
 
+    from methods.ssd.model.modeling_llama_ssd import LlamaForCausalLM
     # Load model and tokenizer
-    model = transformers.AutoModelForCausalLM.from_pretrained(
+    model = LlamaForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=training_args.cache_dir,
