@@ -459,7 +459,7 @@ def preprocess_llama_3(
     # Mask targets. Only compute loss on the assistant outputs.
     sep = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
     for conversation, target in zip(conversations, targets):
-        total_len = len(target)
+        total_len = int(target.ne(tokenizer.pad_token_id).sum())
 
         sep2="<|eot_id|><|start_header_id|>user<|end_header_id|>"
         turns = conversation.split(sep2)
@@ -473,6 +473,10 @@ def preprocess_llama_3(
             turn_len = len(tokenizer(turn).input_ids)
 
             parts = turn.split(sep)
+
+            if len(parts) == 3:
+                parts = parts[:2]
+
             if len(parts) != 2:
                 break
             parts[0] += sep
@@ -497,7 +501,8 @@ def preprocess_llama_3(
             rank0_print(tokenizer.decode(z))
 
         if cur_len < tokenizer.model_max_length:
-            if cur_len != total_len:
+            # if cur_len != total_len:
+            if abs(cur_len - total_len) > 20:
                 target[:] = IGNORE_TOKEN_ID
                 rank0_print(
                     f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
