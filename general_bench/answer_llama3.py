@@ -237,7 +237,9 @@ def run_eval(
         temperature,
         ssd_name,
         attn,
-        tree
+        tree,
+        load_in_8bit,
+        load_in_4bit
 ):
     questions = load_questions(question_file, question_begin, question_end)
     # random shuffle the questions to balance the loading
@@ -272,7 +274,9 @@ def run_eval(
                 temperature,
                 ssd_name,
                 attn,
-                tree
+                tree,
+                load_in_8bit,
+                load_in_4bit
             )
         )
 
@@ -291,7 +295,9 @@ def get_model_answers(
         temperature,
         ssd_name,
         attn,
-        tree
+        tree,
+        load_in_8bit,
+        load_in_4bit
 ):
     #temperature = 0.0
 
@@ -311,6 +317,8 @@ def get_model_answers(
             ssd_name,
             torch_dtype=torch.float16,
             device_map="auto",
+            load_in_8bit=load_in_8bit,
+            load_in_4bit=load_in_4bit
         )
         # model = model.to(device)
 
@@ -319,12 +327,24 @@ def get_model_answers(
     else:
 
         from transformers import LlamaForCausalLM
+        from transformers import BitsAndBytesConfig
         # replace_llama_attn_with_flash_attn()
+
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        )
+
         model = LlamaForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
             device_map="auto",
-            )
+            quantization_config=quantization_config if load_in_4bit else None,
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+        )
         # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
@@ -616,6 +636,10 @@ if __name__ == "__main__":
     parser.add_argument("--attn", action='store_true', required=False, default=False)
 
     parser.add_argument("--tree", action='store_true', required=False, default=False)
+    
+    parser.add_argument("--load_in_8bit", action='store_true', required=False, default=False)
+
+    parser.add_argument("--load_in_4bit", action='store_true', required=False, default=False)
 
     args = parser.parse_args()
 
@@ -649,7 +673,9 @@ if __name__ == "__main__":
         args.temperature,
         args.ssd_name,
         args.attn,
-        args.tree
+        args.tree,
+        args.load_in_8bit,
+        args.load_in_4bit
     )
 
     reorg_answer_file(answer_file)
