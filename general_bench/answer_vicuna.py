@@ -177,7 +177,7 @@ def medusa_tree_generate(model, tokenizer, input_ids, max_new_tokens, max_seq_le
 
     return input_ids, new_token
 
-def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "vicuna" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
@@ -202,7 +202,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Input token length:', len(input_ids[0]))
     # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
 
-    output_token = torch.tensor([], dtype=torch.long).to(device)
+    output_token = torch.tensor([], dtype=torch.long).to(model.device)
 
     inference_count = 0
     accept_lengths = []
@@ -275,7 +275,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Token num:', step)
     return input_ids, step
 
-def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "vicuna" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
@@ -374,7 +374,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
 
     return input_ids, new_token
 
-def ssd_tree_generate_new(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_tree_generate_new(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "vicuna" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
@@ -479,7 +479,7 @@ def ssd_tree_generate_new(model, model_name, tokenizer, input_ids, max_new_token
 
 from methods.ssd.model.utils_eagle import *
 
-def ssd_tree_generate_eagle(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_tree_generate_eagle(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     max_seq_length=max_seq_length-model.total_tokens-10
     input_ids = input_ids.clone()
@@ -660,12 +660,12 @@ def get_model_answers(
 ):
     #temperature = 0.0
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用设备: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("CUDA 不可用，使用 CPU")
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda")
+    #     print(f"使用设备: {torch.cuda.get_device_name(0)}")
+    # else:
+    #     device = torch.device("cpu")
+    #     print("CUDA 不可用，使用 CPU")
 
     if attn:
         
@@ -675,9 +675,9 @@ def get_model_answers(
             model_name,
             ssd_name,
             torch_dtype=torch.float16,
-            device=device,
+            device_map="auto",
             )
-        model = model.to(device)
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -688,8 +688,9 @@ def get_model_answers(
         model = MedusaModel.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
+            device_map="auto",
         )
-        model = model.to(device)
+        # model = model.to(device)
         tokenizer = model.get_tokenizer()
 
     else:
@@ -699,8 +700,9 @@ def get_model_answers(
         model = LlamaForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
+            device_map="auto",
             )
-        model = model.to(device)
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
 
@@ -740,11 +742,10 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
 
                     # output_ids, new_token = ssd_tree_generate_eagle(
@@ -764,11 +765,10 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
             
             elif medusa:
@@ -778,10 +778,9 @@ def get_model_answers(
                     output_ids, new_token = medusa_tree_generate(
                         model,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
-                        device=device
                     )
 
                 else:
@@ -789,16 +788,15 @@ def get_model_answers(
                     output_ids, new_token = medusa_generate(
                         model,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
-                        device=device
                     )
             
             else:
 
                 output_ids = model.generate(
-                    torch.as_tensor(input_ids).cuda(),
+                    torch.as_tensor(input_ids).to(model.device),
                     max_new_tokens=max_new_token,
                     num_beams=1,
                     do_sample=False,
@@ -874,11 +872,10 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
 
                             # output_ids, new_token = ssd_tree_generate_eagle(
@@ -898,11 +895,10 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
                     
                     elif medusa:
@@ -912,10 +908,9 @@ def get_model_answers(
                             output_ids, new_token = medusa_tree_generate(
                                 model,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
-                                device=device
                             )
 
                         else:
@@ -923,16 +918,15 @@ def get_model_answers(
                             output_ids, new_token = medusa_generate(
                                 model,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
-                                device=device
                             )
 
                     else:
 
                         output_ids = model.generate(
-                            torch.as_tensor(input_ids).cuda(),
+                            torch.as_tensor(input_ids).to(model.device),
                             max_new_tokens=max_new_token,
                             num_beams=1,
                             do_sample=False,

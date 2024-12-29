@@ -29,7 +29,7 @@ from methods.medusa.model.medusa_choices import *
 from methods.medusa.model.utils import *
 
 
-def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "Llama-2" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
@@ -54,7 +54,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Input token length:', len(input_ids[0]))
     # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
 
-    output_token = torch.tensor([], dtype=torch.long).to(device)
+    output_token = torch.tensor([], dtype=torch.long).to(model.device)
 
     inference_count = 0
     accept_lengths = []
@@ -127,7 +127,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Token num:', step)
     return input_ids, step
 
-def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "Llama-2" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
@@ -295,12 +295,12 @@ def get_model_answers(
 ):
     #temperature = 0.0
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用设备: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("CUDA 不可用，使用 CPU")
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda")
+    #     print(f"使用设备: {torch.cuda.get_device_name(0)}")
+    # else:
+    #     device = torch.device("cpu")
+    #     print("CUDA 不可用，使用 CPU")
 
     if attn:
         
@@ -310,9 +310,9 @@ def get_model_answers(
             model_name,
             ssd_name,
             torch_dtype=torch.float16,
-            device=device,
-            )
-        model = model.to(device)
+            device_map="auto",
+        )
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -323,8 +323,9 @@ def get_model_answers(
         model = LlamaForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
+            device_map="auto",
             )
-        model = model.to(device)
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
 
@@ -366,11 +367,10 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
                 
                 else:
@@ -379,17 +379,16 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
             
             else:
 
                 output_ids = model.generate(
-                    torch.as_tensor(input_ids).cuda(),
+                    torch.as_tensor(input_ids).to(model.device),
                     max_new_tokens=max_new_token,
                     num_beams=1,
                     do_sample=False,
@@ -467,11 +466,10 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
                         
                         else:
@@ -480,17 +478,16 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
 
                     else:
 
                         output_ids = model.generate(
-                            torch.as_tensor(input_ids).cuda(),
+                            torch.as_tensor(input_ids).to(model.device),
                             max_new_tokens=max_new_token,
                             num_beams=1,
                             do_sample=False,
@@ -629,7 +626,7 @@ if __name__ == "__main__":
 
     #     ray.init()
 
-    question_file = f"/root/idea/speculative_decoding/ssd_hand/evaluation/general_bench/data/{args.bench_name}/question.jsonl"
+    question_file = f"/root/idea/speculative_decoding/VASE/general_bench/data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:

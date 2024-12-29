@@ -29,7 +29,7 @@ from methods.medusa.model.medusa_choices import *
 from methods.medusa.model.utils import *
 
 
-def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "Llama-2" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
@@ -54,7 +54,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Input token length:', len(input_ids[0]))
     # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
 
-    output_token = torch.tensor([], dtype=torch.long).to(device)
+    output_token = torch.tensor([], dtype=torch.long).to(model.device)
 
     inference_count = 0
     accept_lengths = []
@@ -127,7 +127,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # print('Token num:', step)
     return input_ids, step
 
-def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device):
+def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
     if "Llama-2" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
@@ -295,12 +295,12 @@ def get_model_answers(
 ):
     #temperature = 0.0
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用设备: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("CUDA 不可用，使用 CPU")
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda")
+    #     print(f"使用设备: {torch.cuda.get_device_name(0)}")
+    # else:
+    #     device = torch.device("cpu")
+    #     print("CUDA 不可用，使用 CPU")
 
     if attn:
         
@@ -310,9 +310,9 @@ def get_model_answers(
             model_name,
             ssd_name,
             torch_dtype=torch.float16,
-            device=device,
-            )
-        model = model.to(device)
+            device_map="auto",
+        )
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -323,8 +323,9 @@ def get_model_answers(
         model = LlamaForCausalLM.from_pretrained(
             model_name,
             torch_dtype=torch.float16,
+            device_map="auto",
             )
-        model = model.to(device)
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, use_fast=False)
 
@@ -341,25 +342,18 @@ def get_model_answers(
     # warmup
     for _ in range(3):
         torch.manual_seed(0)
-        messages = [
-            {"role": "system",
-             "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
-        ]
+        conv = get_conversation_template("llama-2-chat")
+        sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
+        conv.system_message = sys_p
         turns = []
         new_tokens = []
         wall_time = []
         for j in range(len(question["turns"])):
             qs = question["turns"][j]
-            messages.append({
-                "role": "user",
-                "content": qs
-            })
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            input_ids = tokenizer([prompt],add_special_tokens=False,).input_ids
+            conv.append_message(conv.roles[0], qs)
+            conv.append_message(conv.roles[1], None)
+            prompt = conv.get_prompt() + " "
+            input_ids = tokenizer([prompt]).input_ids
 
             # try:
             torch.cuda.synchronize()
@@ -373,11 +367,10 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
                 
                 else:
@@ -386,17 +379,16 @@ def get_model_answers(
                         model,
                         model_name,
                         tokenizer,
-                        torch.as_tensor(input_ids).cuda(),
+                        torch.as_tensor(input_ids).to(model.device),
                         max_new_token,
                         max_seq_length,
                         attn,
-                        device=device
                     )
             
             else:
 
                 output_ids = model.generate(
-                    torch.as_tensor(input_ids).cuda(),
+                    torch.as_tensor(input_ids).to(model.device),
                     max_new_tokens=max_new_token,
                     num_beams=1,
                     do_sample=False,
@@ -409,17 +401,11 @@ def get_model_answers(
             total_time = time.time() - start_time
             output_ids = output_ids[0][len(input_ids[0]):]
             # be consistent with the template's stop_token_ids
-
-            stop_token_ids = [
-                tokenizer.eos_token_id,
-                tokenizer.convert_tokens_to_ids("<|eot_id|>")
-            ]
-
-            if stop_token_ids:
+            if conv.stop_token_ids:
                 stop_token_ids_index = [
                     i
                     for i, id in enumerate(output_ids)
-                    if id in stop_token_ids
+                    if id in conv.stop_token_ids
                 ]
                 if len(stop_token_ids_index) > 0:
                     output_ids = output_ids[: stop_token_ids_index[0]]
@@ -428,7 +414,9 @@ def get_model_answers(
                 output_ids,
                 spaces_between_special_tokens=False,
             )
-            
+            conv.stop_str = "</s>"
+            if conv.stop_str and output.find(conv.stop_str) > 0:
+                output = output[: output.find(conv.stop_str)]
             for special_token in tokenizer.special_tokens_map.values():
                 if isinstance(special_token, list):
                     for special_tok in special_token:
@@ -437,13 +425,14 @@ def get_model_answers(
                     output = output.replace(special_token, "")
             output = output.strip()
 
+            if conv.name == "xgen" and output.startswith("Assistant:"):
+                output = output.replace("Assistant:", "", 1).strip()
+
+
             turns.append(output)
             new_tokens.append(int(new_token))
             wall_time.append(total_time)
-            messages.append({
-                "role": "assistant",
-                "content": output
-            })
+            conv.messages[-1][-1] = output
     print('Warmup done')
 
     # questions=questions[6:]
@@ -452,25 +441,18 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            messages = [
-                {"role": "system",
-                 "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
-            ]
+            conv = get_conversation_template("llama-2-chat")
+            sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
+            conv.system_message = sys_p
             turns = []
             new_tokens = []
             wall_time = []
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
-                messages.append({
-                    "role": "user",
-                    "content": qs
-                })
-                prompt = tokenizer.apply_chat_template(
-                    messages,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                )
-                input_ids = tokenizer([prompt], add_special_tokens=False, ).input_ids
+                conv.append_message(conv.roles[0], qs)
+                conv.append_message(conv.roles[1], None)
+                prompt = conv.get_prompt() + " "
+                input_ids = tokenizer([prompt]).input_ids
 
                 try:
                     torch.cuda.synchronize()
@@ -484,11 +466,10 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
                         
                         else:
@@ -497,17 +478,16 @@ def get_model_answers(
                                 model,
                                 model_name,
                                 tokenizer,
-                                torch.as_tensor(input_ids).cuda(),
+                                torch.as_tensor(input_ids).to(model.device),
                                 max_new_token,
                                 max_seq_length,
                                 attn,
-                                device=device
                             )
 
                     else:
 
                         output_ids = model.generate(
-                            torch.as_tensor(input_ids).cuda(),
+                            torch.as_tensor(input_ids).to(model.device),
                             max_new_tokens=max_new_token,
                             num_beams=1,
                             do_sample=False,
@@ -520,16 +500,11 @@ def get_model_answers(
                     total_time = time.time() - start_time
                     output_ids = output_ids[0][len(input_ids[0]):]
 
-                    stop_token_ids = [
-                        tokenizer.eos_token_id,
-                        tokenizer.convert_tokens_to_ids("<|eot_id|>")
-                    ]
-
-                    if stop_token_ids:
+                    if conv.stop_token_ids:
                         stop_token_ids_index = [
                             i
                             for i, id in enumerate(output_ids)
-                            if id in stop_token_ids
+                            if id in conv.stop_token_ids
                         ]
                         if len(stop_token_ids_index) > 0:
                             output_ids = output_ids[: stop_token_ids_index[0]]
@@ -538,7 +513,8 @@ def get_model_answers(
                         output_ids,
                         spaces_between_special_tokens=False,
                     )
-                    
+                    if conv.stop_str and output.find(conv.stop_str) > 0:
+                        output = output[: output.find(conv.stop_str)]
                     for special_token in tokenizer.special_tokens_map.values():
                         if isinstance(special_token, list):
                             for special_tok in special_token:
@@ -547,7 +523,8 @@ def get_model_answers(
                             output = output.replace(special_token, "")
                     output = output.strip()
 
-                    
+                    if conv.name == "xgen" and output.startswith("Assistant:"):
+                        output = output.replace("Assistant:", "", 1).strip()
                 except RuntimeError as e:
                     print("ERROR question ID: ", question["question_id"])
                     output = "ERROR"
@@ -555,10 +532,7 @@ def get_model_answers(
                 turns.append(output)
                 new_tokens.append(int(new_token))
                 wall_time.append(total_time)
-                messages.append({
-                    "role": "assistant",
-                    "content": output
-                })
+                conv.messages[-1][-1] = output
             # torch.cuda.empty_cache()
             choices.append({"index": i, "turns": turns, "new_tokens": new_tokens, "wall_time": wall_time})
 
@@ -652,7 +626,7 @@ if __name__ == "__main__":
 
     #     ray.init()
 
-    question_file = f"/home/zmw/ssd_hand/evaluation/general_bench/data/{args.bench_name}/question.jsonl"
+    question_file = f"/root/idea/speculative_decoding/VASE/general_bench/data/{args.bench_name}/question.jsonl"
     if args.answer_file:
         answer_file = args.answer_file
     else:
