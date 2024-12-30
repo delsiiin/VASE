@@ -225,11 +225,8 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
 
         cur_length = input_len
         accept_lengths.append(1)
-        step = 0
-        for _ in range(max_new_tokens):
-
-            if step >= max_new_tokens:
-                break
+        new_token = 0
+        for _ in range(512):
 
             if attn:
                 draft_logits, _, base_logits = model(preds.cuda().unsqueeze(0), output_orig = True, past_key_values = model.past_key_values, past_key_values_attn=model.past_key_values_attn)
@@ -259,8 +256,10 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
             # preds = torch.cat([pred[:, accept_length], draft_pred[:accept_length,0,0]], dim = -1)
             # print(f'Prediction @ {inference_count}: {tokenizer.batch_decode(pred[0, :accept_length + 1])}')
             accept_lengths.append(accept_length + 1)
-            step += accept_length + 1
-            if tokenizer.eos_token_id in pred[0, :accept_length + 1] or cur_length + draft_pred.shape[0] >= max_seq_length:
+            new_token += accept_length + 1
+            if new_token > max_new_tokens:
+                break
+            if tokenizer.eos_token_id in pred[0, :accept_length + 1].tolist():
                 break
         
         input_ids = torch.cat((input_ids, output_token.unsqueeze(0)), dim=-1)
@@ -273,7 +272,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     # # plt.savefig('accept_length.png')
     # print('Avg. accept length:', np.mean(accept_lengths))
     # print('Token num:', step)
-    return input_ids, step
+    return input_ids, new_token
 
 def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
@@ -318,11 +317,8 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
 
         cur_length = input_len + 1
         accept_lengths_tree.append(1)
-        step = 0
-        for _ in range(max_new_tokens):
-
-            if step >= max_new_tokens:
-                break
+        
+        for _ in range(512):
             
             candidates, tree_candidates = generate_ssd_candidates(
                 ssd_logits,
@@ -366,8 +362,8 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
             # print(accept_length_tree, "acc")
             cur_length = accept_length_tree + cur_length
             accept_lengths_tree.append(accept_length_tree)
-            step += accept_length_tree
-            if tokenizer.eos_token_id in input_ids[0, input_len:] or cur_length + new_token >= max_seq_length:
+            
+            if tokenizer.eos_token_id in input_ids[0, input_len:].tolist() or new_token > max_new_tokens:
                 break
 
     # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
