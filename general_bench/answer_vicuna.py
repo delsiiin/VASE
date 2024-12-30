@@ -739,7 +739,7 @@ def get_model_answers(
     # warmup
     for _ in range(3):
         torch.manual_seed(0)
-        conv = get_conversation_template("vicuna")
+        conv = get_conversation_template(model_name)
         turns = []
         new_tokens = []
         wall_time = []
@@ -869,7 +869,7 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            conv = get_conversation_template("vicuna")
+            conv = get_conversation_template(model_name)
             turns = []
             new_tokens = []
             wall_time = []
