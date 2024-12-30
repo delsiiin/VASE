@@ -152,7 +152,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
     # print('Input token length:', len(input_ids[0]))
     # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
 
-    ssd_choices = ssd_vicuna_7b_v13_24_3
+    ssd_choices = ssd_llama2_7b_24_3
 
     accept_lengths_tree = []
     with torch.inference_mode():
