@@ -87,15 +87,39 @@ def initialize_past_key_values(model):
     # Initializing the batch size to 1, this can be modified if different batch sizes are required
     batch_size = 1
     # Initializing a tensor to store past keys and values for all layers
+
+    devices=[]
+    for i in range(config.num_hidden_layers):
+        device = model.base_model.model.layers[i].self_attn.q_proj.weight.device
+        devices.append(device)
+    past_key_values_data_list=[]
+    startnum=0
+    startdevice=devices[0]
+    for id,i in enumerate(devices):
+        if startdevice!=i:
+            past_key_values_data = torch.zeros(
+                startnum * 2,
+                batch_size,
+                config.num_key_value_heads,
+                config.max_position_embeddings,
+                config.hidden_size // config.num_attention_heads,
+                device=startdevice,
+                dtype=model.dtype,
+            )
+            past_key_values_data_list.append(past_key_values_data)
+            startdevice = i
+            startnum=0
+        startnum += 1
     past_key_values_data = torch.zeros(
-        config.num_hidden_layers * 2,
+        startnum * 2,
         batch_size,
         config.num_key_value_heads,
         config.max_position_embeddings,
         config.hidden_size // config.num_attention_heads,
-        device=model.device,
+        device=startdevice,
         dtype=model.dtype,
     )
+    past_key_values_data_list.append(past_key_values_data)
     # Initialize tensor to store the current length of the cached data for all layers.
     # [IMPORTANT] It needs to be kept on CPU for quick access and updates.
     current_length_data = torch.zeros(
@@ -103,14 +127,31 @@ def initialize_past_key_values(model):
     )
     # Creating a KVCache for each pair of key and value in all layers
     past_key_values = [] * config.num_hidden_layers
+
+    bias=0
+    start_data_m=devices[0].index
     for i in range(config.num_hidden_layers):
-        past_key_values.append(
-            [
-                KVCache(past_key_values_data[i * 2 + j], current_length_data[i * 2 + j])
-                for j in range(2)
-            ]
-        )
-    return past_key_values, past_key_values_data, current_length_data
+        data_m=devices[i].index
+        if data_m!=start_data_m:
+            bias=0
+            start_data_m=data_m
+        try:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[data_m-devices[0].index][2*bias + j], current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        except:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[0][2 * bias + j],
+                            current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        bias+=1
+    return past_key_values, past_key_values_data_list, current_length_data
 
 def initialize_past_key_values_attn(model):
     """
@@ -133,77 +174,72 @@ def initialize_past_key_values_attn(model):
     # Initializing the batch size to 1, this can be modified if different batch sizes are required
     batch_size = 1
     # Initializing a tensor to store past keys and values for all layers
+
+    devices=[]
+    for i in range(config.top_k_group):
+        device = model.router.layers[i].self_attn.q_proj.weight.device
+        devices.append(device)
+    past_key_values_data_list=[]
+    startnum=0
+    startdevice=devices[0]
+    for id,i in enumerate(devices):
+        if startdevice!=i:
+            past_key_values_data = torch.zeros(
+                startnum * 2,
+                batch_size,
+                config.num_key_value_heads,
+                config.max_position_embeddings,
+                config.attn_hid_dim // config.num_attention_heads,
+                device=startdevice,
+                dtype=model.dtype,
+            )
+            past_key_values_data_list.append(past_key_values_data)
+            startdevice = i
+            startnum=0
+        startnum += 1
     past_key_values_data = torch.zeros(
-        2 * config.top_k_group,
+        startnum * 2,
         batch_size,
         config.num_key_value_heads,
         config.max_position_embeddings,
         config.attn_hid_dim // config.num_attention_heads,
-        device=model.device,
+        device=startdevice,
         dtype=model.dtype,
     )
+    past_key_values_data_list.append(past_key_values_data)
     # Initialize tensor to store the current length of the cached data for all layers.
     # [IMPORTANT] It needs to be kept on CPU for quick access and updates.
     current_length_data = torch.zeros(
-        2 * config.top_k_group, dtype=torch.long, device="cpu"
+        config.top_k_group * 2, dtype=torch.long, device="cpu"
     )
     # Creating a KVCache for each pair of key and value in all layers
     past_key_values = [] * config.top_k_group
+
+    bias=0
+    start_data_m=devices[0].index
     for i in range(config.top_k_group):
-        past_key_values.append(
-            [
-                KVCache(past_key_values_data[i * 2 + j], current_length_data[i * 2 + j])
-                for j in range(2)
-            ]
-        )
-    return past_key_values, past_key_values_data, current_length_data
+        data_m=devices[i].index
+        if data_m!=start_data_m:
+            bias=0
+            start_data_m=data_m
+        try:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[data_m-devices[0].index][2*bias + j], current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        except:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[0][2 * bias + j],
+                            current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        bias+=1
+    return past_key_values, past_key_values_data_list, current_length_data
 
-
-def initialize_past_key_values_llama_attn(model):
-    """
-    Initialize past key and value states for a given transformer model.
-
-    This function prepares key-value cache structures for the model, allowing it to store and reuse
-    past key and value states during autoregressive decoding, which can improve efficiency.
-
-    Args:
-        model (nn.Module): The transformer model for which past key-value states need to be initialized.
-
-    Returns:
-        tuple:
-            - past_key_values (list): A list of KVCache objects for each layer in the model.
-            - past_key_values_data (torch.Tensor): The tensor that will store all keys and values.
-            - current_length_data (torch.Tensor): A tensor tracking the current length of keys/values in the cache.
-    """
-    # Extracting configuration from the model
-    config = model.config
-    # Initializing the batch size to 1, this can be modified if different batch sizes are required
-    batch_size = 1
-    # Initializing a tensor to store past keys and values for all layers
-    past_key_values_data = torch.zeros(
-        2 * config.top_k_group,
-        batch_size,
-        config.num_key_value_heads,
-        4096,
-        config.attn_hid_dim // config.num_attention_heads,
-        device=model.device,
-        dtype=model.dtype,
-    )
-    # Initialize tensor to store the current length of the cached data for all layers.
-    # [IMPORTANT] It needs to be kept on CPU for quick access and updates.
-    current_length_data = torch.zeros(
-        2 * config.top_k_group, dtype=torch.long, device="cpu"
-    )
-    # Creating a KVCache for each pair of key and value in all layers
-    past_key_values = [] * config.top_k_group
-    for i in range(config.top_k_group):
-        past_key_values.append(
-            [
-                KVCache(past_key_values_data[i * 2 + j], current_length_data[i * 2 + j])
-                for j in range(2)
-            ]
-        )
-    return past_key_values, past_key_values_data, current_length_data
 
 def initialize_past_key_values_llama(model):
     """
@@ -226,15 +262,39 @@ def initialize_past_key_values_llama(model):
     # Initializing the batch size to 1, this can be modified if different batch sizes are required
     batch_size = 1
     # Initializing a tensor to store past keys and values for all layers
+
+    devices=[]
+    for i in range(config.num_hidden_layers):
+        device = model.base_model.model.layers[i].self_attn.q_proj.weight.device
+        devices.append(device)
+    past_key_values_data_list=[]
+    startnum=0
+    startdevice=devices[0]
+    for id,i in enumerate(devices):
+        if startdevice!=i:
+            past_key_values_data = torch.zeros(
+                startnum * 2,
+                batch_size,
+                config.num_key_value_heads,
+                4096,
+                config.hidden_size // config.num_attention_heads,
+                device=startdevice,
+                dtype=model.dtype,
+            )
+            past_key_values_data_list.append(past_key_values_data)
+            startdevice = i
+            startnum=0
+        startnum += 1
     past_key_values_data = torch.zeros(
-        config.num_hidden_layers * 2,
+        startnum * 2,
         batch_size,
         config.num_key_value_heads,
-        4096,
+        config.max_position_embeddings,
         config.hidden_size // config.num_attention_heads,
-        device=model.device,
+        device=startdevice,
         dtype=model.dtype,
     )
+    past_key_values_data_list.append(past_key_values_data)
     # Initialize tensor to store the current length of the cached data for all layers.
     # [IMPORTANT] It needs to be kept on CPU for quick access and updates.
     current_length_data = torch.zeros(
@@ -242,12 +302,116 @@ def initialize_past_key_values_llama(model):
     )
     # Creating a KVCache for each pair of key and value in all layers
     past_key_values = [] * config.num_hidden_layers
+
+    bias=0
+    start_data_m=devices[0].index
     for i in range(config.num_hidden_layers):
-        past_key_values.append(
-            [
-                KVCache(past_key_values_data[i * 2 + j], current_length_data[i * 2 + j])
-                for j in range(2)
-            ]
-        )
-    return past_key_values, past_key_values_data, current_length_data
+        data_m=devices[i].index
+        if data_m!=start_data_m:
+            bias=0
+            start_data_m=data_m
+        try:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[data_m-devices[0].index][2*bias + j], current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        except:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[0][2 * bias + j],
+                            current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        bias+=1
+    return past_key_values, past_key_values_data_list, current_length_data
+
+def initialize_past_key_values_llama_attn(model):
+    """
+    Initialize past key and value states for a given transformer model.
+
+    This function prepares key-value cache structures for the model, allowing it to store and reuse
+    past key and value states during autoregressive decoding, which can improve efficiency.
+
+    Args:
+        model (nn.Module): The transformer model for which past key-value states need to be initialized.
+
+    Returns:
+        tuple:
+            - past_key_values (list): A list of KVCache objects for each layer in the model.
+            - past_key_values_data (torch.Tensor): The tensor that will store all keys and values.
+            - current_length_data (torch.Tensor): A tensor tracking the current length of keys/values in the cache.
+    """
+    # Extracting configuration from the model
+    config = model.config
+    # Initializing the batch size to 1, this can be modified if different batch sizes are required
+    batch_size = 1
+    # Initializing a tensor to store past keys and values for all layers
+
+    devices=[]
+    for i in range(config.top_k_group):
+        device = model.router.layers[i].self_attn.q_proj.weight.device
+        devices.append(device)
+    past_key_values_data_list=[]
+    startnum=0
+    startdevice=devices[0]
+    for id,i in enumerate(devices):
+        if startdevice!=i:
+            past_key_values_data = torch.zeros(
+                startnum * 2,
+                batch_size,
+                config.num_key_value_heads,
+                4096,
+                config.attn_hid_dim // config.num_attention_heads,
+                device=startdevice,
+                dtype=model.dtype,
+            )
+            past_key_values_data_list.append(past_key_values_data)
+            startdevice = i
+            startnum=0
+        startnum += 1
+    past_key_values_data = torch.zeros(
+        startnum * 2,
+        batch_size,
+        config.num_key_value_heads,
+        config.max_position_embeddings,
+        config.attn_hid_dim // config.num_attention_heads,
+        device=startdevice,
+        dtype=model.dtype,
+    )
+    past_key_values_data_list.append(past_key_values_data)
+    # Initialize tensor to store the current length of the cached data for all layers.
+    # [IMPORTANT] It needs to be kept on CPU for quick access and updates.
+    current_length_data = torch.zeros(
+        config.top_k_group * 2, dtype=torch.long, device="cpu"
+    )
+    # Creating a KVCache for each pair of key and value in all layers
+    past_key_values = [] * config.top_k_group
+
+    bias=0
+    start_data_m=devices[0].index
+    for i in range(config.top_k_group):
+        data_m=devices[i].index
+        if data_m!=start_data_m:
+            bias=0
+            start_data_m=data_m
+        try:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[data_m-devices[0].index][2*bias + j], current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        except:
+            past_key_values.append(
+                [
+                    KVCache(past_key_values_data_list[0][2 * bias + j],
+                            current_length_data[i * 2 + j])
+                    for j in range(2)
+                ]
+            )
+        bias+=1
+    return past_key_values, past_key_values_data_list, current_length_data
 

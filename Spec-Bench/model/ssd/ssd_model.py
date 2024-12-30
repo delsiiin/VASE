@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, PretrainedConfig,AutoConfig
 
+from transformers import Trainer, BitsAndBytesConfig
+
 
 from transformers import AutoTokenizer
 import os
@@ -50,15 +52,27 @@ class SSDModel(nn.Module):
             base_model_path=None,
             ssd_model_path=None,
             Type="LLaMA",
-            device=None,
+            load_in_4bit=False,
+            load_in_8bit=False,
             **kwargs,
     ):
         
         ssd_config = SSDConfig.from_pretrained(ssd_model_path)
             
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        )
+        
         base_model = SSDLlamaForCausalLM.from_pretrained(
-            base_model_path, **kwargs
-        ).to(device)
+            base_model_path, 
+            quantization_config=quantization_config if load_in_4bit else None,
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            **kwargs
+        )
 
         model = cls(
             base_model,

@@ -306,7 +306,11 @@ if __name__ == "__main__":
 
     args.model_id = args.model_id+"-temperature-"+str(args.temperature)
     # args.medusa_choices = eval(args.medusa_choices)
-    args.medusa_choices = ssd_vicuna_7b_v13_24_3
+
+    if "vicuna" in args.model_id:
+        args.medusa_choices = ssd_vicuna_7b_v13_24_3
+    elif "llama2" in args.model_id:
+        args.medusa_choices = ssd_llama2_7b_24_3
 
     question_file = f"data/{args.bench_name}/question.jsonl"
     if args.answer_file:
