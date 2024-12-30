@@ -5,13 +5,13 @@ python3 gen_model_answer.py --model-path lmsys/fastchat-t5-3b-v1.0 --model-id fa
 """
 import argparse
 
-from evaluation.eval import run_eval, reorg_answer_file
+from evaluation.eval import reorg_answer_file
 
 from fastchat.utils import str_to_torch_dtype
 
 from model.ssd.utils import *
 from model.ssd.ssd_model import SSDModel
-from model.ssd.kv_cache import initialize_past_key_values, initialize_past_key_values_attn
+from model.ssd.kv_cache import initialize_past_key_values, initialize_past_key_values_attn, initialize_past_key_values_llama, initialize_past_key_values_llama_attn
 from model.ssd.medusa_choices import *
 
 from transformers import AutoTokenizer
@@ -59,6 +59,107 @@ def ssd_forward(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, t
         model.current_length_data = current_length_data
 
         past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
+
+        model.past_key_values_attn = past_key_values_attn
+        model.past_key_values_data_attn = past_key_values_data_attn
+        model.current_length_data_attn = current_length_data_attn
+
+    input_len = input_ids.shape[1]
+    cur_length = input_len
+    reset_ssd_mode(model, True)
+    ssd_logits, logits = initialize_ssd(
+            input_ids, model, ssd_buffers["ssd_attn_mask"], past_key_values, True, past_key_values_attn
+    )
+    new_token = 0
+    
+    for idx in range(max_steps): # idx: new decoding steps
+        candidates, tree_candidates = generate_ssd_candidates(
+                ssd_logits,
+                logits,
+                ssd_buffers["tree_indices"],
+                ssd_buffers["retrieve_indices"],
+            )
+        ssd_logits, logits = ssd_tree_decoding(
+                model,
+                tree_candidates,
+                past_key_values,
+                ssd_buffers["ssd_position_ids"],
+                input_ids,
+                ssd_buffers["retrieve_indices"],
+                True,
+                past_key_values_attn
+            )
+        best_candidate, accept_length = evaluate_posterior(
+                logits, candidates, temperature, posterior_threshold, posterior_alpha
+            )
+        input_ids, logits, ssd_logits, new_token = update_inference_inputs_ssd(
+                input_ids,
+                candidates,
+                best_candidate,
+                accept_length,
+                ssd_buffers["retrieve_indices"],
+                logits,
+                ssd_logits,
+                new_token,
+                past_key_values_data,
+                current_length_data,
+                True,
+                past_key_values_data_attn,
+                current_length_data_attn
+            )
+        accept_length_tree = input_ids.shape[1] - cur_length
+        cur_length = accept_length_tree + cur_length
+        accept_length_list.append(accept_length_tree)
+        if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
+            break
+        if new_token > max_new_tokens:
+            break
+    return input_ids, new_token, idx+1, accept_length_list
+
+
+def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, temperature=0.0, posterior_threshold=0.09, posterior_alpha=0.3, max_steps=512):
+    input_ids = inputs.input_ids
+    assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
+    # Avoid modifying the input_ids in-place
+    input_ids = input_ids.clone()
+    accept_length_list = []
+
+    # Cache medusa buffers (the fixed patterns for tree attention)
+    if hasattr(model, "medusa_choices") and model.medusa_choices == medusa_choices:
+        # Load the cached medusa buffer
+        ssd_buffers = model.ssd_buffers
+    else:
+        # Initialize the medusa buffer
+        ssd_buffers = generate_ssd_buffers(
+            medusa_choices, device=model.base_model.device
+        )
+    model.ssd_buffers = ssd_buffers
+    model.medusa_choices = medusa_choices
+
+    # Initialize the past key and value states
+    if hasattr(model, "past_key_values"):
+        past_key_values = model.past_key_values
+        past_key_values_data = model.past_key_values_data
+        current_length_data = model.current_length_data
+        # Reset the past key and value states
+        current_length_data.zero_()
+
+        past_key_values_attn = model.past_key_values_attn
+        past_key_values_data_attn = model.past_key_values_data_attn
+        current_length_data_attn = model.current_length_data_attn
+        # Reset the past key and value states
+        current_length_data_attn.zero_()
+    else:
+        (
+            past_key_values,
+            past_key_values_data,
+            current_length_data,
+        ) = initialize_past_key_values_llama(model)
+        model.past_key_values = past_key_values
+        model.past_key_values_data = past_key_values_data
+        model.current_length_data = current_length_data
+
+        past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
 
         model.past_key_values_attn = past_key_values_attn
         model.past_key_values_data_attn = past_key_values_data_attn
@@ -225,10 +326,20 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
 
+    if "vicuna" in args.model_id:
+        from evaluation.eval import run_eval
+        forward_func = ssd_forward
+    elif "llama2" in args.model_id:
+        from evaluation.eval_llama2 import run_eval
+        forward_func = ssd_forward_llama
+    elif "llama3" in args.model_id:
+        from evaluation.eval_llama3 import run_eval
+        forward_func = ssd_forward_llama
+
     run_eval(
         model=model,
         tokenizer=tokenizer,
-        forward_func=ssd_forward,
+        forward_func=forward_func,
         model_id=args.model_id,
         question_file=question_file,
         question_begin=args.question_begin,

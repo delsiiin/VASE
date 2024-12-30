@@ -110,6 +110,13 @@ if __name__ == "__main__":
     else:
         do_sample = False
 
+    if "vicuna" in args.model_id:
+        from evaluation.eval import run_eval
+    elif "llama2" in args.model_id:
+        from evaluation.eval_llama2 import run_eval
+    elif "llama3" in args.model_id:
+        from evaluation.eval_llama3 import run_eval
+
     run_eval(
         model=model,
         tokenizer=tokenizer,
