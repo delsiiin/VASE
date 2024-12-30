@@ -32,12 +32,12 @@ def get_accuracies(ssd, logit):
 
 def main(args):
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print(f"使用设备: {torch.cuda.get_device_name(0)}")
-    else:
-        device = torch.device("cpu")
-        print("CUDA 不可用，使用 CPU")
+    # if torch.cuda.is_available():
+    #     device = torch.device("cuda")
+    #     print(f"使用设备: {torch.cuda.get_device_name(0)}")
+    # else:
+    #     device = torch.device("cpu")
+    #     print("CUDA 不可用，使用 CPU")
 
     if args.attn:
         
@@ -47,35 +47,58 @@ def main(args):
             args.model_path,
             args.ssd_name,
             torch_dtype=torch.float16,
-            device=device,
+            device_map="auto",
             )
-        model = model.to(device)
+        # model = model.to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     model = model.eval()
 
     data = json.load(open(args.data_path))
-    past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
-    model.past_key_values = past_key_values
-    model.past_key_values_data = past_key_values_data
-    model.current_length_data = current_length_data
 
-    if args.attn:
-        past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
+    if "vicuna" in args.model_name:
+        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
+        model.past_key_values = past_key_values
+        model.past_key_values_data = past_key_values_data
+        model.current_length_data = current_length_data
 
-        model.past_key_values_attn = past_key_values_attn
-        model.past_key_values_data_attn = past_key_values_data_attn
-        model.current_length_data_attn = current_length_data_attn
+        if args.attn:
+            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
+
+            model.past_key_values_attn = past_key_values_attn
+            model.past_key_values_data_attn = past_key_values_data_attn
+            model.current_length_data_attn = current_length_data_attn
+    elif "llama2" in args.model_name:
+        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
+        model.past_key_values = past_key_values
+        model.past_key_values_data = past_key_values_data
+        model.current_length_data = current_length_data
+
+        if args.attn:
+            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
+
+            model.past_key_values_attn = past_key_values_attn
+            model.past_key_values_data_attn = past_key_values_data_attn
+            model.current_length_data_attn = current_length_data_attn\
 
     results = None
 
     for sample in tqdm((data)):
-        conv = get_conversation_template("vicuna")
-        conv.messages = []
-        conv.append_message(conv.roles[0], sample["instruction"])
-        conv.append_message(conv.roles[1], "")
-        prompt = conv.get_prompt()
+        if "vicuna" in args.model_name:
+            conv = get_conversation_template("vicuna")
+            conv.messages = []
+            conv.append_message(conv.roles[0], sample["instruction"])
+            conv.append_message(conv.roles[1], "")
+            prompt = conv.get_prompt()
+        elif "llama2" in args.model_name:
+            conv = get_conversation_template("llama-2-chat")
+            sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
+            conv.system_message = sys_p
+            conv.messages = []
+            conv.append_message(conv.roles[0], sample["instruction"])
+            conv.append_message(conv.roles[1], "")
+            prompt = conv.get_prompt() + " "
         steps = args.steps
         logits_ids = []
         ssd_topk_ids = []

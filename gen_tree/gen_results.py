@@ -85,7 +85,7 @@ def main():
     parser.add_argument('--output-path', type=str, required=True, help="Path to save the generated graph.")
     parser.add_argument('--ex-output-path', type=str, required=False, help="Path to save the generated graph.", default='./data/graph_ex.jpg')
     parser.add_argument('--max-depth', type=int, default=3, help="Maximum depth of the graph.")
-    parser.add_argument('--num-iterations', type=int, default=36, help="Number of exploration iterations.")
+    parser.add_argument('--num-iterations', type=int, default=24, help="Number of exploration iterations.")
     parser.add_argument('--max-child', nargs='+', type=int, default=[10, 10, 10], help="Maximum number of children per depth.")
 
     args = parser.parse_args()
