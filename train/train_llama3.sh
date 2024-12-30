@@ -7,9 +7,9 @@ WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 main.py 
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 4 \
     --evaluation_strategy "steps" \
-    --eval_steps 2000 \
+    --eval_steps 1000 \
     --save_strategy "steps" \
-    --save_steps 2000 \
+    --save_steps 4000 \
     --learning_rate 2e-3 \
     --weight_decay 0.0 \
     --warmup_ratio 0.1 \
