@@ -92,7 +92,9 @@ def get_model_answers(
     # warmup
     for _ in range(3):
         torch.manual_seed(0)
-        conv = get_conversation_template("vicuna")
+        conv = get_conversation_template("llama-2-chat")
+        sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
+        conv.system_message = sys_p
         turns = []
         steps = []
         new_tokens = []
@@ -101,9 +103,8 @@ def get_model_answers(
             qs = question["turns"][j]
             conv.append_message(conv.roles[0], qs)
             conv.append_message(conv.roles[1], None)
-            conv.stop_str = "</s>"
-            prompt = conv.get_prompt()
-            inputs = tokenizer([prompt], return_tensors="pt").to("cuda")
+            prompt = conv.get_prompt() + " "
+            inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
             input_ids = inputs.input_ids
             try:
                 torch.cuda.synchronize()
@@ -132,6 +133,7 @@ def get_model_answers(
                     output_ids,
                     spaces_between_special_tokens=False,
                 )
+                conv.stop_str = "</s>"
                 if conv.stop_str and output.find(conv.stop_str) > 0:
                     output = output[: output.find(conv.stop_str)]
                 for special_token in tokenizer.special_tokens_map.values():
@@ -162,7 +164,9 @@ def get_model_answers(
         for i in range(num_choices):
             cur_accept_lengths_tree = []
             torch.manual_seed(i)
-            conv = get_conversation_template("vicuna")
+            conv = get_conversation_template("llama-2-chat")
+            sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
+            conv.system_message = sys_p
             turns = []
             steps = []
             new_tokens = []
@@ -171,9 +175,8 @@ def get_model_answers(
                 qs = question["turns"][j]
                 conv.append_message(conv.roles[0], qs)
                 conv.append_message(conv.roles[1], None)
-                conv.stop_str = "</s>"
-                prompt = conv.get_prompt()
-                inputs = tokenizer([prompt], return_tensors="pt").to("cuda")
+                prompt = conv.get_prompt() + " "
+                inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
                 input_ids = inputs.input_ids
                 try:
                     torch.cuda.synchronize()
@@ -203,6 +206,7 @@ def get_model_answers(
                         output_ids,
                         spaces_between_special_tokens=False,
                     )
+                    conv.stop_str = "</s>"
                     if conv.stop_str and output.find(conv.stop_str) > 0:
                         output = output[: output.find(conv.stop_str)]
                     for special_token in tokenizer.special_tokens_map.values():

@@ -30,7 +30,7 @@ def ssd_forward(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, t
     else:
         # Initialize the medusa buffer
         ssd_buffers = generate_ssd_buffers(
-            medusa_choices, device=model.base_model.device
+            medusa_choices, device=model.device
         )
     model.ssd_buffers = ssd_buffers
     model.medusa_choices = medusa_choices
@@ -131,7 +131,7 @@ def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=N
     else:
         # Initialize the medusa buffer
         ssd_buffers = generate_ssd_buffers(
-            medusa_choices, device=model.base_model.device
+            medusa_choices, device=model.device
         )
     model.ssd_buffers = ssd_buffers
     model.medusa_choices = medusa_choices

@@ -103,7 +103,7 @@ def get_model_answers(
             conv.append_message(conv.roles[1], None)
             conv.stop_str = "</s>"
             prompt = conv.get_prompt()
-            inputs = tokenizer([prompt], return_tensors="pt").to("cuda")
+            inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
             input_ids = inputs.input_ids
             try:
                 torch.cuda.synchronize()
@@ -173,7 +173,7 @@ def get_model_answers(
                 conv.append_message(conv.roles[1], None)
                 conv.stop_str = "</s>"
                 prompt = conv.get_prompt()
-                inputs = tokenizer([prompt], return_tensors="pt").to("cuda")
+                inputs = tokenizer([prompt], return_tensors="pt").to(model.device)
                 input_ids = inputs.input_ids
                 try:
                     torch.cuda.synchronize()
