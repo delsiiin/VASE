@@ -28,7 +28,7 @@ def medusa_forward(inputs, model, tokenizer, max_new_tokens, medusa_choices=None
     else:
         # Initialize the medusa buffer
         medusa_buffers = generate_medusa_buffers(
-            medusa_choices, device=model.base_model.device
+            medusa_choices, device=model.device
         )
     model.medusa_buffers = medusa_buffers
     model.medusa_choices = medusa_choices
