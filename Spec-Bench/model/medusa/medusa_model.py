@@ -107,8 +107,10 @@ class MedusaModel(nn.Module):
             ]
         )
 
+        self.device = base_model.model.layers[-1].self_attn.q_proj.weight.device
+
         # Ensure medusa_head's dtype and device align with the base_model
-        self.medusa_head.to(self.base_model.dtype).to(self.base_model.device)
+        self.medusa_head.to(self.base_model.dtype).to(self.device)
 
         for i in range(medusa_num_heads):
             # Initialize the weights of each medusa_head using the base model's weights

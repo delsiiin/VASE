@@ -346,7 +346,7 @@ def update_inference_inputs(
     logits,
     medusa_logits,
     new_token,
-    past_key_values_data,
+    past_key_values_data_list,
     current_length_data,
 ):
     """
@@ -381,11 +381,12 @@ def update_inference_inputs(
     )
     # Update the past key values based on the selected tokens
     # Source tensor that contains relevant past information based on the selected candidate
-    tgt = past_key_values_data[..., select_indices, :]
-    # Destination tensor where the relevant past information will be stored
-    dst = past_key_values_data[..., prev_input_len : prev_input_len + tgt.shape[-2], :]
-    # Copy relevant past information from the source to the destination
-    dst.copy_(tgt, non_blocking=True)
+    for past_key_values_data in past_key_values_data_list:
+        tgt = past_key_values_data[..., select_indices.to(past_key_values_data.device), :]
+        # Destination tensor where the relevant past information will be stored
+        dst = past_key_values_data[..., prev_input_len: prev_input_len + tgt.shape[-2], :]
+        # Copy relevant past information from the source to the destination
+        dst.copy_(tgt, non_blocking=True)
 
     # Update the current length tensor (currently only support batch size is 1)
     current_length_data.fill_(prev_input_len + tgt.shape[-2])
