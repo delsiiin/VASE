@@ -110,7 +110,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
             # print(f'Prediction @ {inference_count}: {tokenizer.batch_decode(pred[0, :accept_length + 1])}')
             accept_lengths.append(accept_length + 1)
             new_token += accept_length + 1
-            print(cur_length, 111111111)
+           
             if new_token > max_new_tokens:
                 break
             if stop_token_id in pred[0, :accept_length + 1].tolist():
@@ -420,6 +420,7 @@ def get_model_answers(
                     num_beams=1,
                     do_sample=False,
                     temperature=0.0,
+                    eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>")
                 )
 
                 new_token = 0
