@@ -11,14 +11,24 @@ from evaluation.eval import run_eval, reorg_answer_file
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-def baseline_forward(inputs, model, tokenizer, max_new_tokens, temperature=0.0, do_sample=False):
+def baseline_forward(inputs, model, tokenizer, max_new_tokens, temperature=0.0, do_sample=False, model_id=None):
+
     input_ids = inputs.input_ids
-    output_ids = model.generate(
-        input_ids,
-        do_sample=do_sample,
-        temperature=temperature,
-        max_new_tokens=max_new_tokens,
-    )
+    if "llama3" in model_id:
+        output_ids = model.generate(
+            input_ids,
+            do_sample=do_sample,
+            temperature=temperature,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        )
+    else:
+        output_ids = model.generate(
+            input_ids,
+            do_sample=do_sample,
+            temperature=temperature,
+            max_new_tokens=max_new_tokens,
+        )
     new_token = len(output_ids[0][len(input_ids[0]):])
     step = new_token
     accept_length_list = [1] * new_token

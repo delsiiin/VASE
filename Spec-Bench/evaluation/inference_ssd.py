@@ -117,7 +117,11 @@ def ssd_forward(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, t
     return input_ids, new_token, idx+1, accept_length_list
 
 
-def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, temperature=0.0, posterior_threshold=0.09, posterior_alpha=0.3, max_steps=512):
+def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, temperature=0.0, posterior_threshold=0.09, posterior_alpha=0.3, max_steps=512, model_id=None):
+    
+    if "llama3" in model_id:
+        stop_token_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
+    
     input_ids = inputs.input_ids
     assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
     # Avoid modifying the input_ids in-place
@@ -211,8 +215,12 @@ def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=N
         accept_length_tree = input_ids.shape[1] - cur_length
         cur_length = accept_length_tree + cur_length
         accept_length_list.append(accept_length_tree)
-        if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
-            break
+        if "llama3" in model_id:
+            if stop_token_id in input_ids[0, input_len:].tolist():
+                break
+        else:
+            if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
+                break
         if new_token > max_new_tokens:
             break
     return input_ids, new_token, idx+1, accept_length_list
@@ -309,7 +317,7 @@ if __name__ == "__main__":
 
     if "vicuna" in args.model_id:
         args.medusa_choices = ssd_vicuna_7b_v13_24_3
-    elif "llama2" in args.model_id:
+    elif "llama" in args.model_id:
         args.medusa_choices = ssd_llama2_7b_24_3
 
     question_file = f"data/{args.bench_name}/question.jsonl"
