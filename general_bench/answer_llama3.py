@@ -31,7 +31,9 @@ from methods.medusa.model.utils import *
 
 def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
-    if "Llama-2" in model_name:
+    stop_token_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
+
+    if "Llama-3" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
 
     model.past_key_values = past_key_values
@@ -41,7 +43,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
     model.current_length_data.zero_() # this is for rerun
 
     if attn:
-        if "Llama-2" in model_name:
+        if "Llama-3" in model_name:
             past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
 
         model.past_key_values_attn = past_key_values_attn
@@ -111,7 +113,7 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
             print(cur_length, 111111111)
             if new_token > max_new_tokens:
                 break
-            if tokenizer.eos_token_id in pred[0, :accept_length + 1].tolist():
+            if stop_token_id in pred[0, :accept_length + 1].tolist():
                 break
         
         input_ids = torch.cat((input_ids, output_token.unsqueeze(0)), dim=-1)
@@ -128,7 +130,9 @@ def ssd_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_se
 
 def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
-    if "Llama-2" in model_name:
+    stop_token_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
+
+    if "Llama-3" in model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
 
     model.past_key_values = past_key_values
@@ -138,7 +142,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
     model.current_length_data.zero_() # this is for rerun
 
     if attn:
-        if "Llama-2" in model_name:
+        if "Llama-3" in model_name:
             past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
 
         model.past_key_values_attn = past_key_values_attn
@@ -214,7 +218,7 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
             cur_length = accept_length_tree + cur_length
             accept_lengths_tree.append(accept_length_tree)
             
-            if tokenizer.eos_token_id in input_ids[0, input_len:].tolist() or new_token > max_new_tokens:
+            if stop_token_id in input_ids[0, input_len:].tolist() or new_token > max_new_tokens:
                 break
 
     # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
@@ -358,18 +362,25 @@ def get_model_answers(
     # warmup
     for _ in range(3):
         torch.manual_seed(0)
-        conv = get_conversation_template(model_name)
-        sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-        conv.system_message = sys_p
+        messages = [
+            {"role": "system",
+             "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+        ]
         turns = []
         new_tokens = []
         wall_time = []
         for j in range(len(question["turns"])):
             qs = question["turns"][j]
-            conv.append_message(conv.roles[0], qs)
-            conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt() + " "
-            input_ids = tokenizer([prompt]).input_ids
+            messages.append({
+                "role": "user",
+                "content": qs
+            })
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            input_ids = tokenizer([prompt],add_special_tokens=False,).input_ids
 
             # try:
             torch.cuda.synchronize()
@@ -417,11 +428,15 @@ def get_model_answers(
             total_time = time.time() - start_time
             output_ids = output_ids[0][len(input_ids[0]):]
             # be consistent with the template's stop_token_ids
-            if conv.stop_token_ids:
+            stop_token_ids = [
+                tokenizer.eos_token_id,
+                tokenizer.convert_tokens_to_ids("<|eot_id|>")
+            ]
+            if stop_token_ids:
                 stop_token_ids_index = [
                     i
                     for i, id in enumerate(output_ids)
-                    if id in conv.stop_token_ids
+                    if id in stop_token_ids
                 ]
                 if len(stop_token_ids_index) > 0:
                     output_ids = output_ids[: stop_token_ids_index[0]]
@@ -430,9 +445,7 @@ def get_model_answers(
                 output_ids,
                 spaces_between_special_tokens=False,
             )
-            conv.stop_str = "</s>"
-            if conv.stop_str and output.find(conv.stop_str) > 0:
-                output = output[: output.find(conv.stop_str)]
+            
             for special_token in tokenizer.special_tokens_map.values():
                 if isinstance(special_token, list):
                     for special_tok in special_token:
@@ -441,14 +454,13 @@ def get_model_answers(
                     output = output.replace(special_token, "")
             output = output.strip()
 
-            if conv.name == "xgen" and output.startswith("Assistant:"):
-                output = output.replace("Assistant:", "", 1).strip()
-
-
             turns.append(output)
             new_tokens.append(int(new_token))
             wall_time.append(total_time)
-            conv.messages[-1][-1] = output
+            messages.append({
+                "role": "assistant",
+                "content": output
+            })
     print('Warmup done')
 
     # questions=questions[6:]
@@ -457,18 +469,25 @@ def get_model_answers(
         choices = []
         for i in range(num_choices):
             torch.manual_seed(i)
-            conv = get_conversation_template(model_name)
-            sys_p = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-            conv.system_message = sys_p
+            messages = [
+                {"role": "system",
+                 "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+            ]
             turns = []
             new_tokens = []
             wall_time = []
             for j in range(len(question["turns"])):
                 qs = question["turns"][j]
-                conv.append_message(conv.roles[0], qs)
-                conv.append_message(conv.roles[1], None)
-                prompt = conv.get_prompt() + " "
-                input_ids = tokenizer([prompt]).input_ids
+                messages.append({
+                    "role": "user",
+                    "content": qs
+                })
+                prompt = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                input_ids = tokenizer([prompt], add_special_tokens=False, ).input_ids
 
                 try:
                     torch.cuda.synchronize()
@@ -508,6 +527,7 @@ def get_model_answers(
                             num_beams=1,
                             do_sample=False,
                             temperature=0.0,
+                            eos_token_id=tokenizer.convert_tokens_to_ids("<|eot_id|>"),
                         )
 
                         new_token = 0
@@ -516,11 +536,16 @@ def get_model_answers(
                     total_time = time.time() - start_time
                     output_ids = output_ids[0][len(input_ids[0]):]
 
-                    if conv.stop_token_ids:
+                    stop_token_ids = [
+                        tokenizer.eos_token_id,
+                        tokenizer.convert_tokens_to_ids("<|eot_id|>")
+                    ]
+
+                    if stop_token_ids:
                         stop_token_ids_index = [
                             i
                             for i, id in enumerate(output_ids)
-                            if id in conv.stop_token_ids
+                            if id in stop_token_ids
                         ]
                         if len(stop_token_ids_index) > 0:
                             output_ids = output_ids[: stop_token_ids_index[0]]
@@ -529,8 +554,7 @@ def get_model_answers(
                         output_ids,
                         spaces_between_special_tokens=False,
                     )
-                    if conv.stop_str and output.find(conv.stop_str) > 0:
-                        output = output[: output.find(conv.stop_str)]
+                    
                     for special_token in tokenizer.special_tokens_map.values():
                         if isinstance(special_token, list):
                             for special_tok in special_token:
@@ -539,8 +563,6 @@ def get_model_answers(
                             output = output.replace(special_token, "")
                     output = output.strip()
 
-                    if conv.name == "xgen" and output.startswith("Assistant:"):
-                        output = output.replace("Assistant:", "", 1).strip()
                 except RuntimeError as e:
                     print("ERROR question ID: ", question["question_id"])
                     output = "ERROR"
@@ -548,7 +570,10 @@ def get_model_answers(
                 turns.append(output)
                 new_tokens.append(int(new_token))
                 wall_time.append(total_time)
-                conv.messages[-1][-1] = output
+                messages.append({
+                    "role": "assistant",
+                    "content": output
+                })
             # torch.cuda.empty_cache()
             choices.append({"index": i, "turns": turns, "new_tokens": new_tokens, "wall_time": wall_time})
 
