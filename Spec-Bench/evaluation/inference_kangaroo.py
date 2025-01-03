@@ -37,7 +37,7 @@ def kangaroo_forward(inputs, model, tokenizer, max_new_tokens, max_length = 2048
         hidden_state_early = output.hidden_states[EARLY_STOP_LAYER]
 
         # KV-cache for the adapter
-        hidden_state, adapter_past_key_values = model.adapter_model.forward_early_stop(inputs_embeds=hidden_state_early[:,:,:], position_ids=global_position_ids[:, :context_length], use_cache=True) 
+        hidden_state, adapter_past_key_values = model.adapter_model.forward_early_stop(inputs_embeds=hidden_state_early[:,:,:].to(model.device), position_ids=global_position_ids[:, :context_length].to(model.device), use_cache=True) 
 
     total_inference_steps = 0
 
@@ -76,7 +76,7 @@ def kangaroo_forward(inputs, model, tokenizer, max_new_tokens, max_length = 2048
                 if step == SPECULATIVE_DECODING_STEPS or (step > 0 and predict_score < threshold):
                     break
 
-                hidden_state, adapter_past_key_values = model.adapter_model.forward_early_stop(inputs_embeds=hidden_state_early, position_ids=position_ids, past_key_values=adapter_past_key_values, use_cache=True)
+                hidden_state, adapter_past_key_values = model.adapter_model.forward_early_stop(inputs_embeds=hidden_state_early.to(model.device), position_ids=position_ids.to(model.device), past_key_values=adapter_past_key_values, use_cache=True)
 
                 predict_logits = model.head_model(hidden_state[:,-1:,:]).float() 
                 global_tokens[:, end_index] = torch.argmax(predict_logits[:, -1, :], dim=-1)
