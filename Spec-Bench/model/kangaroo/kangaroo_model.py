@@ -25,8 +25,10 @@ class KangarooModel(nn.Module):
         config = LlamaConfig.from_pretrained(os.path.join(adapter_model_path, "config.json"))
         self.adapter_model = AdapterModel(config)
 
+        self.device = self.base_model.model.layers[-1].self_attn.q_proj.weight.device
+
         self.adapter_model.load_state_dict(torch.load(os.path.join(adapter_model_path, "pytorch_model.bin"), map_location="cpu"), strict=False)
-        self.adapter_model = self.adapter_model.eval().to(self.base_model.device)
+        self.adapter_model = self.adapter_model.eval().to(self.device)
 
         if args.dtype == "float16":
             self.adapter_model = self.adapter_model.half()
@@ -38,9 +40,7 @@ class KangarooModel(nn.Module):
         weights = torch.load(os.path.join(base_model_name_or_path, head_path), map_location='cpu')
         tensor = weights["lm_head.weight"].float()
         self.head_model.weight.data = tensor
-        self.head_model = self.head_model.eval().to(self.base_model.device)
-
-        self.device = self.base_model.device
+        self.head_model = self.head_model.eval().to(self.device)
 
         if args.dtype == "float16":
             self.head_model = self.head_model.half()
