@@ -114,6 +114,7 @@ def get_model_answers(
                     model,
                     tokenizer,
                     max_new_tokens,
+                    model_id=model_id,
                     **kwargs,
                 )
                 torch.cuda.synchronize()
@@ -186,6 +187,7 @@ def get_model_answers(
                         model,
                         tokenizer,
                         max_new_tokens,
+                        model_id=model_id,
                         **kwargs,
                     )
                     torch.cuda.synchronize()
