@@ -1,4 +1,4 @@
-WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 main.py --model_name_or_path /root/MODELS/Meta-Llama-3-8B-Instruct \
+WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 main.py --model_name_or_path /root/MODELS/Meta-Llama-3-8B-Instruct \
     --data_path /root/idea/speculative_decoding/sharegpt_medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json \
     --bf16 True \
     --output_dir ssd_models/ \
@@ -23,7 +23,9 @@ WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 main.py 
     --resnet_num 1 \
     --attn_hid_dim 1024  \
     --ssd_decay_coefficient 0.8 \
-    --model_type llama3 
+    --model_type llama3 \
+    --load_in_8bit True \
+    --deepspeed ds_config.json 
 
 # CUDA_VISIBLE_DEVICES=1 accelerate launch main_1.py \
 #     --tmpdir /root/idea/speculative_decoding/sharegpt_medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json \
