@@ -735,8 +735,7 @@ class Model(nn.Module):
             #     input_ids = topk_index[out_ids, in_ids][None]
             # with Timer("1index"):
             input_ids = topk_index.view(-1)[topk_cs_index][None]
-            # print(input_ids.equal(input_ids0))
-
+            # print(input_ids.equal(input_ids0))            
             ss_token.append(topk_index)
             scores_list.append(cu_scores)
             tree_mask = torch.cat((tree_mask[:, :, out_ids], self.tree_mask_init), dim=3)
