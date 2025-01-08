@@ -673,9 +673,10 @@ class RouterModel(LlamaPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.down_proj = nn.Linear(config.hidden_size, attn_hid_dim, bias=False)
+        if attn_hid_dim != config.hidden_size:
+            self.down_proj = nn.Linear(config.hidden_size, attn_hid_dim, bias=False)
 
-        self.up_proj = nn.Linear(attn_hid_dim, config.hidden_size, bias=False)
+            self.up_proj = nn.Linear(attn_hid_dim, config.hidden_size, bias=False)
 
         self.resnet_block = nn.Sequential(
             *[ResBlock(config.hidden_size) for _ in range(config.resnet_num)]
@@ -819,7 +820,8 @@ class RouterModel(LlamaPreTrainedModel):
 
         inputs_embeds = self.resnet_block(inputs_embeds)
 
-        inputs_embeds = self.down_proj(inputs_embeds)
+        if hasattr(self, "down_proj"):
+            inputs_embeds = self.down_proj(inputs_embeds)
 
         all_draft_hidden_states = []
 
@@ -884,7 +886,8 @@ class RouterModel(LlamaPreTrainedModel):
 
         all_draft_hidden_states = torch.stack(all_draft_hidden_states, dim=0)
 
-        all_draft_hidden_states = self.up_proj(all_draft_hidden_states)
+        if hasattr(self, "up_proj"):
+            all_draft_hidden_states = self.up_proj(all_draft_hidden_states)
 
         # for name, param in self.router.named_parameters():
         #     print(name, param)
