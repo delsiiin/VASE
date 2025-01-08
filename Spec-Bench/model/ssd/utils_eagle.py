@@ -347,24 +347,24 @@ def update_inference_inputs_ssd_ea_hid(
     
     # Update the past key values based on the selected tokens
     # Source tensor that contains relevant past information based on the selected candidate
-    tgt = model.past_key_values_data[..., select_indices, :]
-    # Destination tensor where the relevant past information will be stored
-    dst = model.past_key_values_data[..., prev_input_len : prev_input_len + tgt.shape[-2], :]
-    # Copy relevant past information from the source to the destination
-    dst.copy_(tgt, non_blocking=True)
+    for past_key_values_data in model.past_key_values_data:
+        tgt = past_key_values_data[..., select_indices.to(past_key_values_data.device), :]
+        # Destination tensor where the relevant past information will be stored
+        dst = past_key_values_data[..., prev_input_len: prev_input_len + tgt.shape[-2], :]
+        # Copy relevant past information from the source to the destination
+        dst.copy_(tgt, non_blocking=True)
 
     # Update the current length tensor (currently only support batch size is 1)
     model.current_length_data.fill_(prev_input_len + tgt.shape[-2])
 
     # Update the past key values based on the selected tokens
     # Source tensor that contains relevant past information based on the selected candidate
-    tgt_attn = model.past_key_values_data_attn[..., select_indices, :]
-    # Destination tensor where the relevant past information will be stored
-    dst_attn = model.past_key_values_data_attn[
-        ..., prev_input_len : prev_input_len + tgt_attn.shape[-2], :
-    ]
-    # Copy relevant past information from the source to the destination
-    dst_attn.copy_(tgt_attn, non_blocking=True)
+    for past_key_values_data_attn in model.past_key_values_data_attn:
+            tgt_attn = past_key_values_data_attn[..., select_indices.to(past_key_values_data_attn.device), :]
+            # Destination tensor where the relevant past information will be stored
+            dst_attn = past_key_values_data_attn[..., prev_input_len: prev_input_len + tgt_attn.shape[-2], :]
+            # Copy relevant past information from the source to the destination
+            dst_attn.copy_(tgt_attn, non_blocking=True)
 
     # Update the current length tensor (currently only support batch size is 1)
     model.current_length_data_attn.fill_(prev_input_len + tgt_attn.shape[-2])
