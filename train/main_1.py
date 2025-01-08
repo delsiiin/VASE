@@ -1,19 +1,19 @@
 import argparse
 
 parser = argparse.ArgumentParser(description='sp')
-parser.add_argument('--basepath', type=str, default='/home/zmw/vicuna-7b-v1.3')
+parser.add_argument('--basepath', type=str, default='/root/MODELS/vicuna-7b-v1.3')
 parser.add_argument('--load_in_4bit', default=False, action='store_true')
 parser.add_argument('--load_in_8bit', default=False, action='store_true')
 parser.add_argument('--configpath', type=str, default="config.json")
-parser.add_argument('--lr', type=float, default=1e-3)
+parser.add_argument('--lr', type=float, default=2e-3)
 parser.add_argument('--bs', type=int, default=1)
 parser.add_argument('--gradient-accumulation-steps', type=int, default=4)
-parser.add_argument('--tmpdir', type=str, default='/home/zmw/sharegpt_medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json')
+parser.add_argument('--tmpdir', type=str, default='/root/idea/speculative_decoding/VASE/gen_data/train_data_vicuna7b')
 parser.add_argument('--cpdir', type=str, default='./test')
 parser.add_argument('--top_layers_len', type=int, default=24)
-parser.add_argument('--top_k_group', type=int, default=4)
+parser.add_argument('--top_k_group', type=int, default=3)
 parser.add_argument('--resnet_num', type=int, default=1)
-parser.add_argument('--attn_hid_dim', type=int, default=1024)
+parser.add_argument('--attn_hid_dim', type=int, default=4096)
 parser.add_argument('--ssd_decay_coefficient', type=float, default=0.8)
 
 
@@ -30,7 +30,7 @@ train_config = {
     "num_warmup_steps": 2000,
     "total_steps": 800000,
     "num_workers": 1,
-    "max_len": 1600,
+    "max_len": 2048,
     "b1": 0.9,
     "b2": 0.95,
     "grad_clip": 0.5,
@@ -97,161 +97,81 @@ def rank0_print(*args):
     if local_rank == 0:
         print(*args)
 
-
-def preprocess(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-) -> Dict:
-    """
-    Preprocesses conversation data and tokenizes it for model input.
-
-    Args:
-        sources: A list of conversation sources.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for tokenization.
-
-    Returns:
-        Dict: A dictionary containing tokenized inputs, labels, and attention mask.
-    """
-    conv = get_conversation_template("vicuna")
-    roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
-
-    # Apply prompt templates
-    conversations = []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != conv.roles[0]:
-            # Skip the first one if it is not from human
-            source = source[1:]
-
-        conv.messages = []
-        for j, sentence in enumerate(source):
-            role = roles[sentence["from"]]
-            assert role == conv.roles[j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
-            conv.append_message(role, sentence["value"])
-        conversations.append(conv.get_prompt())
-
-    # Tokenize conversations
-    input_ids = tokenizer(
-        conversations,
-        return_tensors="pt",
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-    ).input_ids
-    targets = input_ids.clone()
-
-    assert conv.sep_style == SeparatorStyle.ADD_COLON_TWO
-
-    # Mask targets. Only compute loss on the assistant outputs.
-    sep = conv.sep + conv.roles[1] + ": "
-    for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
-        turns = conversation.split(conv.sep2)
-        cur_len = 1
-        target[:cur_len] = IGNORE_TOKEN_ID
-        for i, turn in enumerate(turns):
-            if turn == "":
-                break
-            turn_len = len(tokenizer(turn).input_ids)
-
-            parts = turn.split(sep)
-            if len(parts) != 2:
-                break
-            parts[0] += sep
-            # "-2" is hardcoded for the LLaMA tokenizer to make the offset correct.
-            instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-
-            # Ignore the user instructions
-            target[cur_len : cur_len + instruction_len] = IGNORE_TOKEN_ID
-            cur_len += turn_len
-
-        target[cur_len:] = IGNORE_TOKEN_ID
-
-        if False:  # Inspect and check the correctness of masking
-            z = target.clone()
-            z = torch.where(z == IGNORE_TOKEN_ID, tokenizer.unk_token_id, z)
-            rank0_print(tokenizer.decode(z))
-
-        if cur_len < tokenizer.model_max_length:
-            if cur_len != total_len:
-                target[:] = IGNORE_TOKEN_ID
-                rank0_print(
-                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
-                    f" (ignored)"
-                )
-
-    return dict(
-        input_ids=input_ids,
-        labels=targets,
-        attention_mask=input_ids.ne(tokenizer.pad_token_id),
-    )
+def list_files(path):
+    datapath = []
+    for root, directories, files in os.walk(path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            datapath.append(file_path)
+    return datapath
 
 
-class SupervisedDataset(Dataset):
-    """Dataset for supervised fine-tuning.
 
-    Args:
-        raw_data (list): A list of raw data examples.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for data preprocessing.
-    """
-
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer):
-        super(SupervisedDataset, self).__init__()
-
-        rank0_print("Formatting inputs...")
-        sources = [example["conversations"] for example in raw_data]
-        data_dict = preprocess(sources, tokenizer)
-
-        self.input_ids = data_dict["input_ids"]
-        self.labels = data_dict["labels"]
-        self.attention_mask = data_dict["attention_mask"]
+class CustomDataset(Dataset):
+    def __init__(self, datapath):
+        self.data = datapath
 
     def __len__(self):
-        return len(self.input_ids)
+        return len(self.data)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        return dict(
-            input_ids=self.input_ids[i],
-            labels=self.labels[i],
-            attention_mask=self.attention_mask[i],
-        )
+    def __getitem__(self, index):
+        # try:
+        data = torch.load(self.data[index])
+        new_data = {}
+        hidden_state = data['hidden_state'][:train_config["max_len"]][None, :]
+        input_ids = data['input_ids'][:train_config["max_len"]][None, :]
+        labels = data["labels"][:train_config["max_len"]][None, :]
 
 
-class LazySupervisedDataset(Dataset):
-    """Lazy dataset for supervised fine-tuning.
+        length = hidden_state.shape[1]
+        # length_q = data['query_ids'].shape[1]
+        attention_mask = [1] * length
 
-    This dataset loads data on-the-fly when requested, which can be memory-efficient but slower.
+        new_data["attention_mask"] = attention_mask
+        new_data["labels"] = labels
+        new_data["hidden_state_big"] = hidden_state
+        new_data["input_ids"] = input_ids
 
-    Args:
-        raw_data (list): A list of raw data examples.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for data preprocessing.
-    """
+        return new_data
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer):
-        super(LazySupervisedDataset, self).__init__()
-        self.tokenizer = tokenizer
 
-        rank0_print("Formatting inputs...Skip in lazy mode")
-        self.tokenizer = tokenizer
-        self.raw_data = raw_data
-        self.cached_data_dict = {}
+class DataCollatorWithPadding:
 
-    def __len__(self):
-        return len(self.raw_data)
+    def paddingtensor(self, intensors, N):
+        B, n, S = intensors.shape
+        # padding_tensor = torch.zeros(B, N - n, S,dtype=intensors.dtype)
+        padding_tensor = torch.zeros(B, N - n, S)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        if i in self.cached_data_dict:
-            return self.cached_data_dict[i]
+    def paddingtensor2D(self, intensors, N):
+        B, n = intensors.shape
+        padding_tensor = torch.zeros(B, N - n, dtype=intensors.dtype)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
+    
+    def paddingtensor2D_ignore(self, intensors, N):
+        B, n = intensors.shape
+        padding_tensor = torch.full((B, N - n), IGNORE_TOKEN_ID, dtype=intensors.dtype)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
 
-        ret = preprocess([self.raw_data[i]["conversations"]], self.tokenizer)
-        ret = dict(
-            input_ids=ret["input_ids"][0],
-            labels=ret["labels"][0],
-            attention_mask=ret["attention_mask"][0],
-        )
-        self.cached_data_dict[i] = ret
-
-        return ret
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        max_length = max(item['hidden_state_big'].shape[1] for item in features)
+        batch_input_ids = torch.cat([self.paddingtensor2D(item['input_ids'], max_length) for item in features])
+        batch_hidden_states = torch.cat([self.paddingtensor(item['hidden_state_big'], max_length) for item in features])
+        batch_labels = torch.cat([self.paddingtensor2D_ignore(item['labels'], max_length) for item in features])
+        batch_attention_mask = torch.tensor(
+            [item['attention_mask'] + [0] * (max_length - len(item['attention_mask'])) for item in features])
+        # batch_loss_mask = torch.ones_like(batch_loss_mask)
+        # batch_attention_mask=torch.ones_like(batch_attention_mask)
+        batch = {
+            "input_ids": batch_input_ids,
+            "hidden_states": batch_hidden_states,
+            "attention_mask": batch_attention_mask,
+            "labels": batch_labels,
+        }
+        return batch
 
 
 tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -263,47 +183,21 @@ tokenizer = transformers.AutoTokenizer.from_pretrained(
 tokenizer.pad_token = tokenizer.unk_token
 
 
-
 # Check if datasets already exist
-train_dataset_path = os.path.join(args.cpdir, "train_dataset.pt")
-eval_dataset_path = os.path.join(args.cpdir, "eval_dataset.pt")
+datapath = list_files(train_config['datapath'])
 
-if os.path.exists(train_dataset_path) and os.path.exists(eval_dataset_path):
-    # Load the datasets
-    traindataset = torch.load(train_dataset_path)
-    testdataset = torch.load(eval_dataset_path)
+traindatapath = datapath[:int(len(datapath) * 0.99)]
+testdatapath = datapath[int(len(datapath) * 0.99):]
 
-else:
-    # Load data
-    data = json.load(open(train_config['datapath'], "r"))
-
-    traindata = data[:int(len(data) * 0.99)]
-    testdata = data[int(len(data) * 0.99):]
-
-    traindataset = SupervisedDataset(traindata, tokenizer)
-    testdataset = SupervisedDataset(testdata, tokenizer)
-
-    # Filter out elements where labels are all -100
-    def filter_dataset(dataset):
-        filtered_data = []
-        for data in dataset:
-            if not torch.all(data["labels"] == IGNORE_TOKEN_ID):
-                filtered_data.append(data)
-        return filtered_data
-
-    traindataset = filter_dataset(traindataset)
-    testdataset = filter_dataset(testdataset)
-
-    # Save the datasets for future use
-    torch.save(traindataset, train_dataset_path)
-    torch.save(testdataset, eval_dataset_path)
+traindataset = CustomDataset(traindatapath)
+testdataset = CustomDataset(testdatapath)
 
 
 train_loader = DataLoader(traindataset, batch_size=train_config["bs"], shuffle=True,
-                            num_workers=train_config["num_workers"],
+                            collate_fn=DataCollatorWithPadding(), num_workers=train_config["num_workers"],
                           pin_memory=True)
 test_loader = DataLoader(testdataset, batch_size=train_config["bs"], shuffle=False,
-                            num_workers=train_config["num_workers"], pin_memory=True)
+                            collate_fn=DataCollatorWithPadding(), num_workers=train_config["num_workers"], pin_memory=True)
 
 
 if accelerator.is_main_process:
@@ -316,30 +210,13 @@ config = transformers.AutoConfig.from_pretrained(
 )
 config.use_cache = False
 
-quantization_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_use_double_quant=True,
-    bnb_4bit_quant_type="nf4",
-)
-
-# Load model and tokenizer
-model = transformers.AutoModelForCausalLM.from_pretrained(
-    args.basepath,
-    config=config,
-    low_cpu_mem_usage=True,
-    torch_dtype=torch.bfloat16,
-    quantization_config=quantization_config if args.load_in_4bit else None,
-    load_in_4bit=args.load_in_4bit,
-    load_in_8bit=args.load_in_8bit,
-)
-
 # Generate Medusa config for pushing to HF hub
 ssd_config = SSDConfig(
     top_layers_len=args.top_layers_len,
     top_k_group=args.top_k_group,
     resnet_num=args.resnet_num,
-    attn_hid_dim=args.attn_hid_dim
+    attn_hid_dim=args.attn_hid_dim,
+    **config.to_dict()
 )
 
 # Save Medusa config
@@ -347,13 +224,10 @@ ssd_config.save_pretrained(args.cpdir)
 
 # Add Medusa heads
 ssd_model = SSDModel(
-    model,
-    ssd_config
+    None,
+    ssd_config,
+    args.basepath,
 )
-
-# Freeze the base model
-for param in ssd_model.base_model.parameters():
-    param.requires_grad = False
 
 optimizer = optim.AdamW(ssd_model.parameters(), lr=train_config["lr"], betas=(train_config["b1"], train_config["b2"]))
 
@@ -366,12 +240,12 @@ if is_warmup:
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=num_warmup_steps,
                                                 num_training_steps=total_steps)
 
-    ssd_model, model, optimizer, train_loader, test_loader, scheduler = accelerator.prepare(
-        ssd_model, model, optimizer, train_loader, test_loader, scheduler
+    ssd_model, optimizer, train_loader, test_loader, scheduler = accelerator.prepare(
+        ssd_model, optimizer, train_loader, test_loader, scheduler
     )
 else:
-    ssd_model, model, optimizer, train_loader, test_loader = accelerator.prepare(
-        ssd_model, model, optimizer, train_loader, test_loader
+    ssd_model, optimizer, train_loader, test_loader = accelerator.prepare(
+        ssd_model, optimizer, train_loader, test_loader
     )
 
 
@@ -388,7 +262,7 @@ for epoch in range(args.recover+1,num_epochs + 1):
 
         with accelerator.accumulate(ssd_model):
             optimizer.zero_grad()
-            predict = ssd_model(input_ids=data["input_ids"], attention_mask=data["attention_mask"])#这里hidden states是在数据预处理时就用大模型计算好了的
+            predict = ssd_model(hidden_states=data["hidden_states"], attention_mask=data["attention_mask"])#这里hidden states是在数据预处理时就用大模型计算好了的
 
             labels = data["labels"]
             # Shift so that tokens < n predict n
@@ -442,7 +316,7 @@ for epoch in range(args.recover+1,num_epochs + 1):
         for batch_idx, data in enumerate(tqdm(test_loader)):
             with torch.no_grad():
 
-                predict = ssd_model(input_ids=data["input_ids"],
+                predict = ssd_model(hidden_states=data["hidden_states"],
                                 attention_mask=data["attention_mask"])
                 labels = data["labels"]
                 # Shift so that tokens < n predict n
