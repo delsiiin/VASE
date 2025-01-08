@@ -41,6 +41,8 @@ from transformers import LlamaForCausalLM
 from methods.ssd.model.ssd_model import SSDModel
 from methods.ssd.model.ssd_config import SSDConfig
 
+from typing import Any, Dict, List
+
 import random
 
 def seed_torch(seed=42):
@@ -88,7 +90,7 @@ def replace_compute_loss_cross_entropy(
             topk = model.topk
 
         logits = model(
-            input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]
+            hidden_states=inputs["hidden_states"], attention_mask=inputs["attention_mask"]
         )
         labels = inputs["labels"]
         # Shift so that tokens < n predict n
@@ -122,6 +124,14 @@ def replace_compute_loss_cross_entropy(
         return (loss, logits) if return_outputs else loss
     
     transformers.trainer.Trainer.compute_loss = compute_loss
+
+def list_files(path):
+    datapath = []
+    for root, directories, files in os.walk(path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            datapath.append(file_path)
+    return datapath
 
 @dataclass
 class ModelArguments:
@@ -183,14 +193,10 @@ class TrainingArguments(transformers.TrainingArguments):
         default=0.8,
         metadata={"help": "Number of layers for each Medusa head."},
     )
+    remove_unused_columns: bool = field(default=False)
 
 
 local_rank = None
-
-
-def rank0_print(*args):
-    if local_rank == 0:
-        print(*args)
 
 
 def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
@@ -208,430 +214,70 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
         trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
 
 
-def preprocess_vicuna(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-) -> Dict:
-    """
-    Preprocesses conversation data and tokenizes it for model input.
-
-    Args:
-        sources: A list of conversation sources.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for tokenization.
-
-    Returns:
-        Dict: A dictionary containing tokenized inputs, labels, and attention mask.
-    """
-    conv = get_conversation_template("vicuna")
-    roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
-
-    # Apply prompt templates
-    conversations = []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != conv.roles[0]:
-            # Skip the first one if it is not from human
-            source = source[1:]
-
-        conv.messages = []
-        for j, sentence in enumerate(source):
-            role = roles[sentence["from"]]
-            assert role == conv.roles[j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
-            conv.append_message(role, sentence["value"])
-        conversations.append(conv.get_prompt())
-
-    # Tokenize conversations
-    input_ids = tokenizer(
-        conversations,
-        return_tensors="pt",
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-    ).input_ids
-    targets = input_ids.clone()
-
-    assert conv.sep_style == SeparatorStyle.ADD_COLON_TWO
-
-    # Mask targets. Only compute loss on the assistant outputs.
-    sep = conv.sep + conv.roles[1] + ": "
-    for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
-        turns = conversation.split(conv.sep2)
-        cur_len = 1
-        target[:cur_len] = IGNORE_TOKEN_ID
-        for i, turn in enumerate(turns):
-            if turn == "":
-                break
-            turn_len = len(tokenizer(turn).input_ids)
-
-            parts = turn.split(sep)
-            if len(parts) != 2:
-                break
-            parts[0] += sep
-            # "-2" is hardcoded for the LLaMA tokenizer to make the offset correct.
-            instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-
-            # Ignore the user instructions
-            target[cur_len : cur_len + instruction_len] = IGNORE_TOKEN_ID
-            cur_len += turn_len
-
-        target[cur_len:] = IGNORE_TOKEN_ID
-
-        if False:  # Inspect and check the correctness of masking
-            z = target.clone()
-            z = torch.where(z == IGNORE_TOKEN_ID, tokenizer.unk_token_id, z)
-            rank0_print(tokenizer.decode(z))
-
-        if cur_len < tokenizer.model_max_length:
-            if cur_len != total_len:
-                target[:] = IGNORE_TOKEN_ID
-                rank0_print(
-                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
-                    f" (ignored)"
-                )
-
-    return dict(
-        input_ids=input_ids,
-        labels=targets,
-        attention_mask=input_ids.ne(tokenizer.pad_token_id),
-    )
-
-def preprocess_llama_2(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-) -> Dict:
-    """
-    Preprocesses conversation data and tokenizes it for model input.
-
-    Args:
-        sources: A list of conversation sources.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for tokenization.
-
-    Returns:
-        Dict: A dictionary containing tokenized inputs, labels, and attention mask.
-    """
-
-    conv = get_conversation_template("llama-2-chat")
-    sys_p="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-    conv.system_message=sys_p
-    roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
-
-    # Apply prompt templates
-    conversations = []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != conv.roles[0]:
-            # Skip the first one if it is not from human
-            source = source[1:]
-
-        conv.messages = []
-        for j, sentence in enumerate(source):
-            role = roles[sentence["from"]]
-            assert role == conv.roles[j % 2], f"{i}, {j}, {role}, {conv.roles[j % 2]}"
-            if sentence["from"]=="gpt":
-                sentence["value"]=" "+sentence["value"]
-            conv.append_message(role, sentence["value"])
-        conversations.append(conv.get_prompt())
-
-    if not tokenizer.pad_token_id:
-        tokenizer.pad_token_id=tokenizer.unk_token_id
-
-    # Tokenize conversations
-    input_ids = tokenizer(
-        conversations,
-        return_tensors="pt",
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-    ).input_ids
-    targets = input_ids.clone()
-
-    # assert conv.sep_style == SeparatorStyle.ADD_COLON_TWO
-
-    # Mask targets. Only compute loss on the assistant outputs.
-    sep = conv.sep + conv.roles[1] + " "
-    for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
-        turns = conversation.split(conv.sep2)
-        cur_len = 1
-        target[:cur_len] = IGNORE_TOKEN_ID
-        for i, turn in enumerate(turns):
-            if turn == "":
-                break
-            turn_len = len(tokenizer(turn).input_ids)
-
-            parts = turn.split(sep)
-            if len(parts) != 2:
-                break
-            parts[0] += sep
-            # "-2" is hardcoded for the LLaMA tokenizer to make the offset correct.
-            instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-
-            # Ignore the user instructions
-            target[cur_len : cur_len + instruction_len] = IGNORE_TOKEN_ID
-            cur_len += turn_len
-            cur_len+=2
-
-        target[cur_len:] = IGNORE_TOKEN_ID
-
-        if False:  # Inspect and check the correctness of masking
-            z = target.clone()
-            z = torch.where(z == IGNORE_TOKEN_ID, tokenizer.unk_token_id, z)
-            rank0_print(tokenizer.decode(z))
-
-        if cur_len < tokenizer.model_max_length:
-            if cur_len != total_len:
-                target[:] = IGNORE_TOKEN_ID
-                rank0_print(
-                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
-                    f" (ignored)"
-                )
-
-    return dict(
-        input_ids=input_ids,
-        labels=targets,
-        attention_mask=input_ids.ne(tokenizer.pad_token_id),
-    )
-
-def preprocess_llama_3(
-    sources,
-    tokenizer: transformers.PreTrainedTokenizer,
-) -> Dict:
-    """
-    Preprocesses conversation data and tokenizes it for model input.
-
-    Args:
-        sources: A list of conversation sources.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for tokenization.
-
-    Returns:
-        Dict: A dictionary containing tokenized inputs, labels, and attention mask.
-    """
-    
-    convroles=["user","assistant"]
-    roles = {"human": "user", "gpt": "assistant"}
-
-    # Apply prompt templates
-    conversations = []
-    for i, source in enumerate(sources):
-        if roles[source[0]["from"]] != "user":
-            # Skip the first one if it is not from human
-            source = source[1:]
-
-        messages = [
-            {"role": "system",
-                "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
-        ]
-
-        for j, sentence in enumerate(source):
-            role = roles[sentence["from"]]
-            assert role == convroles[j % 2], f"{i}, {j}, {role}, {convroles[j % 2]}"
-            if sentence["from"]=="gpt":
-                sentence["value"]=" "+sentence["value"]
-            messages.append(
-                {"role": role, "content": sentence["value"]}
-            )
-
-        conversations.append(
-            tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-        )
-
-    if not tokenizer.pad_token_id:
-        tokenizer.pad_token_id=0
-
-    # Tokenize conversations
-    input_ids = tokenizer(
-        conversations,
-        return_tensors="pt",
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        add_special_tokens=False,
-    ).input_ids
-    targets = input_ids.clone()
-
-    # assert conv.sep_style == SeparatorStyle.ADD_COLON_TWO
-
-    # Mask targets. Only compute loss on the assistant outputs.
-    sep = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
-    for conversation, target in zip(conversations, targets):
-        total_len = int(target.ne(tokenizer.pad_token_id).sum())
-
-        sep2="<|eot_id|><|start_header_id|>user<|end_header_id|>"
-        turns = conversation.split(sep2)
-        turns[1]=turns[0]+sep2+turns[1]
-        turns=turns[1:]
-        cur_len = 1
-        target[:cur_len] = IGNORE_TOKEN_ID
-        for i, turn in enumerate(turns):
-            if turn == "":
-                break
-            turn_len = len(tokenizer(turn).input_ids)
-
-            parts = turn.split(sep)
-
-            if len(parts) == 3:
-                parts = parts[:2]
-
-            if len(parts) != 2:
-                break
-            parts[0] += sep
-            # "-2" is hardcoded for the LLaMA tokenizer to make the offset correct.
-            instruction_len = len(tokenizer(parts[0]).input_ids) - 1
-
-            # Ignore the user instructions
-            if i==0:
-                target[cur_len : cur_len + instruction_len-2] = IGNORE_TOKEN_ID
-            else:
-                target[cur_len-3: cur_len + instruction_len+1] = IGNORE_TOKEN_ID
-
-            cur_len += turn_len
-            if i!=0:
-                cur_len+=3
-
-        target[cur_len:] = IGNORE_TOKEN_ID
-
-        if False:  # Inspect and check the correctness of masking
-            z = target.clone()
-            z = torch.where(z == IGNORE_TOKEN_ID, tokenizer.unk_token_id, z)
-            rank0_print(tokenizer.decode(z))
-
-        if cur_len < tokenizer.model_max_length:
-            # if cur_len != total_len:
-            if abs(cur_len - total_len) > 20:
-                target[:] = IGNORE_TOKEN_ID
-                rank0_print(
-                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
-                    f" (ignored)"
-                )
-
-    return dict(
-        input_ids=input_ids,
-        labels=targets,
-        attention_mask=input_ids.ne(tokenizer.pad_token_id),
-    )
-
-
-class SupervisedDataset(Dataset):
-    """Dataset for supervised fine-tuning.
-
-    Args:
-        raw_data (list): A list of raw data examples.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for data preprocessing.
-    """
-
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, model_type="vicuna"):
-        super(SupervisedDataset, self).__init__()
-
-        self.model_type = model_type
-
-        rank0_print("Formatting inputs...")
-        sources = [example["conversations"] for example in raw_data]
-
-        if self.model_type == "llama2":
-            data_dict = preprocess_llama_2(sources, tokenizer)
-        elif self.model_type == "llama3":
-            data_dict = preprocess_llama_3(sources, tokenizer)
-        elif self.model_type == "vicuna":
-            data_dict = preprocess_vicuna(sources, tokenizer)
-
-        self.input_ids = data_dict["input_ids"]
-        self.labels = data_dict["labels"]
-        self.attention_mask = data_dict["attention_mask"]
+class CustomDataset(Dataset):
+    def __init__(self, datapath):
+        self.data = datapath
 
     def __len__(self):
-        return len(self.input_ids)
+        return len(self.data)
 
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, index):
+        # try:
+        data = torch.load(self.data[index])
+        hidden_state = data['hidden_state'][:2048][None, :]
+        input_ids = data['input_ids'][:2048][None, :]
+        labels = data["labels"][:2048][None, :]
+
+
+        length = hidden_state.shape[1]
+        # length_q = data['query_ids'].shape[1]
+        attention_mask = [1] * length
+
         return dict(
-            input_ids=self.input_ids[i],
-            labels=self.labels[i],
-            attention_mask=self.attention_mask[i],
+            hidden_state_big=hidden_state,
+            input_ids=input_ids,
+            labels=labels,
+            attention_mask=attention_mask,
         )
 
 
-class LazySupervisedDataset(Dataset):
-    """Lazy dataset for supervised fine-tuning.
+class DataCollatorWithPadding:
 
-    This dataset loads data on-the-fly when requested, which can be memory-efficient but slower.
+    def paddingtensor(self, intensors, N):
+        B, n, S = intensors.shape
+        # padding_tensor = torch.zeros(B, N - n, S,dtype=intensors.dtype)
+        padding_tensor = torch.zeros(B, N - n, S)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
 
-    Args:
-        raw_data (list): A list of raw data examples.
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for data preprocessing.
-    """
+    def paddingtensor2D(self, intensors, N):
+        B, n = intensors.shape
+        padding_tensor = torch.zeros(B, N - n, dtype=intensors.dtype)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
+    
+    def paddingtensor2D_ignore(self, intensors, N):
+        B, n = intensors.shape
+        padding_tensor = torch.full((B, N - n), IGNORE_TOKEN_ID, dtype=intensors.dtype)
+        outtensors = torch.cat((intensors, padding_tensor), dim=1)
+        return outtensors
 
-    def __init__(self, raw_data, tokenizer: transformers.PreTrainedTokenizer, model_type="vicuna"):
-        super(LazySupervisedDataset, self).__init__()
-        self.tokenizer = tokenizer
-
-        rank0_print("Formatting inputs...Skip in lazy mode")
-        self.tokenizer = tokenizer
-        self.raw_data = raw_data
-        self.cached_data_dict = {}
-        self.model_type = model_type
-
-    def __len__(self):
-        return len(self.raw_data)
-
-    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
-        if i in self.cached_data_dict:
-            return self.cached_data_dict[i]
-
-        if self.model_type == "llama2":
-            ret = preprocess_llama_2([self.raw_data[i]["conversations"]], self.tokenizer)
-        elif self.model_type == "llama3":
-            ret = preprocess_llama_3([self.raw_data[i]["conversations"]], self.tokenizer)
-        elif self.model_type == "vicuna":
-            ret = preprocess_vicuna([self.raw_data[i]["conversations"]], self.tokenizer)
-
-        ret = dict(
-            input_ids=ret["input_ids"][0],
-            labels=ret["labels"][0],
-            attention_mask=ret["attention_mask"][0],
-        )
-        self.cached_data_dict[i] = ret
-
-        return ret
-
-
-def make_supervised_data_module(
-    tokenizer: transformers.PreTrainedTokenizer, data_args
-) -> Dict:
-    """Make dataset and collator for supervised fine-tuning.
-
-    Args:
-        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to use for data preprocessing.
-        data_args: Data arguments.
-
-    Returns:
-        dict: A dictionary containing train and eval datasets.
-    """
-    dataset_cls = (
-        LazySupervisedDataset if data_args.lazy_preprocess else SupervisedDataset
-    )
-    rank0_print("Loading data...")
-
-    train_json = json.load(open(data_args.data_path, "r"))
-    train_dataset = dataset_cls(train_json[:int(len(train_json) * 0.99)], tokenizer=tokenizer, model_type=data_args.model_type)
-    eval_dataset = dataset_cls(train_json[int(len(train_json) * 0.99):], tokenizer=tokenizer, model_type=data_args.model_type)
-
-    # Filter out elements where labels are all -100
-    def filter_dataset(dataset):
-        filtered_data = []
-        for data in dataset:
-            if not torch.all(data["labels"] == IGNORE_TOKEN_ID):
-                filtered_data.append(data)
-        return filtered_data
-
-    train_dataset = filter_dataset(train_dataset)
-    eval_dataset = filter_dataset(eval_dataset)
-
-
-    return dict(train_dataset=train_dataset, eval_dataset=eval_dataset)
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        max_length = max(item['hidden_state_big'].shape[1] for item in features)
+        batch_input_ids = torch.cat([self.paddingtensor2D(item['input_ids'], max_length) for item in features])
+        batch_hidden_states = torch.cat([self.paddingtensor(item['hidden_state_big'], max_length) for item in features])
+        batch_labels = torch.cat([self.paddingtensor2D_ignore(item['labels'], max_length) for item in features])
+        batch_attention_mask = torch.tensor(
+            [item['attention_mask'] + [0] * (max_length - len(item['attention_mask'])) for item in features])
+        # batch_loss_mask = torch.ones_like(batch_loss_mask)
+        # batch_attention_mask=torch.ones_like(batch_attention_mask)
+        batch = {
+            "input_ids": batch_input_ids,
+            "hidden_states": batch_hidden_states,
+            "attention_mask": batch_attention_mask,
+            "labels": batch_labels,
+        }
+        return batch
 
 
 def train():
@@ -653,26 +299,6 @@ def train():
         scaling_factor = float(math.ceil(training_args.model_max_length / orig_ctx_len))
         config.rope_scaling = {"type": "linear", "factor": scaling_factor}
     config.use_cache = False
-
-    quantization_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4",
-    )
-
-    from methods.ssd.model.modeling_llama_ssd import LlamaForCausalLM
-    # Load model and tokenizer
-    model = LlamaForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
-        config=config,
-        cache_dir=training_args.cache_dir,
-        low_cpu_mem_usage=True,
-        torch_dtype=torch.bfloat16,
-        quantization_config=quantization_config if model_args.load_in_4bit else None,
-        load_in_4bit=model_args.load_in_4bit,
-        load_in_8bit=model_args.load_in_8bit,
-    )
 
     # Generate Medusa config for pushing to HF hub
     ssd_config = SSDConfig(
@@ -702,22 +328,15 @@ def train():
         tokenizer.pad_token = tokenizer.unk_token
 
     # Check if datasets already exist
-    train_dataset_path = os.path.join(training_args.output_dir, f"train_dataset_{data_args.model_type}.pt")
-    eval_dataset_path = os.path.join(training_args.output_dir, f"eval_dataset_{data_args.model_type}.pt")
+    datapath = list_files(data_args.data_path)
 
-    if os.path.exists(train_dataset_path) and os.path.exists(eval_dataset_path):
-        # Load the datasets
-        train_dataset = torch.load(train_dataset_path)
-        eval_dataset = torch.load(eval_dataset_path)
-        data_module = {"train_dataset": train_dataset, "eval_dataset": eval_dataset}
-    else:
-        # Load data
-        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
+    traindatapath = datapath[:int(len(datapath) * 0.99)]
+    testdatapath = datapath[int(len(datapath) * 0.99):]
 
-        # Save the datasets for future use
-        torch.save(data_module["train_dataset"], train_dataset_path)
-        torch.save(data_module["eval_dataset"], eval_dataset_path)
+    traindataset = CustomDataset(traindatapath)
+    testdataset = CustomDataset(testdatapath)
 
+    data_module = dict(train_dataset=traindataset, eval_dataset=testdataset)
 
     # Format output dir
     training_args.output_dir = os.path.join(training_args.output_dir, f"{model_args.model_name_or_path.split('/')[-1]}_ssd_{training_args.top_k_group}_lr_{training_args.learning_rate}_dim_{training_args.attn_hid_dim}")
@@ -727,21 +346,15 @@ def train():
 
     # Add Medusa heads
     ssd_model = SSDModel(
-        model,
-        ssd_config
+        None,
+        ssd_config,
+        model_args.model_name_or_path,
     )
-
-    # Freeze the base model
-    for param in ssd_model.base_model.parameters():
-        param.requires_grad = False
-
-    # import pdb; pdb.set_trace()
-    # Start trainner
 
     replace_compute_loss_cross_entropy(training_args.ssd_decay_coefficient)
 
     trainer = Trainer(
-        model=ssd_model, tokenizer=tokenizer, args=training_args, **data_module
+        model=ssd_model, tokenizer=tokenizer, args=training_args, data_collator=DataCollatorWithPadding(), **data_module
     )
 
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
