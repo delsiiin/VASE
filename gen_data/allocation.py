@@ -62,6 +62,8 @@ for i in range(num_p):
         command = "python gen_data_all_vicuna.py --start={} --end={} --index={} --gpu_index {} --outdir {} --basemodel {} --data {}".format(start, end, index,gpu_index_str,outdir,args.basemodel,args.data)
     elif args.type == 'llama2':
         command = "python gen_data_all_llama2.py --start={} --end={} --index={} --gpu_index {} --outdir {} --basemodel {} --data {}".format(start, end, index,gpu_index_str,outdir,args.basemodel,args.data)
+    elif args.type == 'llama3':
+        command = "python gen_data_all_llama3.py --start={} --end={} --index={} --gpu_index {} --outdir {} --basemodel {} --data {}".format(start, end, index,gpu_index_str,outdir,args.basemodel,args.data)
     commands.append(command)
 # run_command(commands[0])
 # commands=commands[:1]

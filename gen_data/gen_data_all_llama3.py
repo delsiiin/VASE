@@ -7,7 +7,7 @@ parser.add_argument('--end', type=int, default=100)
 parser.add_argument('--index', type=int, default=1)
 parser.add_argument('--gpu_index', type=int, nargs='+', default=[0])
 parser.add_argument('--outdir', type=str, default='outdir0')
-parser.add_argument('--basemodel', type=str, default='/root/MODELS/Llama-2-7b-chat-hf')
+parser.add_argument('--basemodel', type=str, default='/root/MODELS/Meta-Llama-3-8B-Instruct')
 parser.add_argument('--data', type=str, default='/root/idea/speculative_decoding/sharegpt_medusa/ShareGPT_V4.3_unfiltered_cleaned_split.json')
 args = parser.parse_args()
 import os
@@ -66,42 +66,53 @@ def build_dataset_rank(
             "labels": [],
         }
         for i in range(len(examples['id'])):
-            conv = get_conversation_template("llama-2-chat")
-            sys_p="You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."
-            conv.system_message=sys_p
-            roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
+            messages = [
+                {"role": "system",
+                 "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+            ]
+            convroles=["user","assistant"]
+            roles = {"human": "user", "gpt": "assistant"}
             source= examples['conversations'][i]
-            if roles[source[0]["from"]] != conv.roles[0]:
+            if roles[source[0]["from"]] != 'user':
                 # Skip the first one if it is not from human
                 source = source[1:]
-            conv.messages = []
             for j, sentence in enumerate(source):
                 role = roles[sentence["from"]]
-                assert role == conv.roles[j % 2], f"{i}"
+                assert role == convroles[j % 2], f"{i}"
                 if sentence["from"]=="gpt":
                     sentence["value"]=" "+sentence["value"]
-                conv.append_message(role, sentence["value"])
-            conversation=conv.get_prompt()
+                messages.append(
+                    {"role": role, "content": sentence["value"]}
+                )
+            conversation=tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
             # if i==56:
             #     print(i)
             # if i==57:
             #     print(i)
             if not tokenizer.pad_token_id:
-                tokenizer.pad_token_id=tokenizer.unk_token_id
+                tokenizer.pad_token_id=0
             input_ids = tokenizer(
                 conversation,
                 return_tensors="pt",
                 max_length=2048,
-                truncation=True,
+                add_special_tokens=False,
             ).input_ids[0]
             target = input_ids.clone()
             #print(i)
 
-            sep = conv.sep + conv.roles[1] + " "
+            sep = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
 
-            total_len = int(input_ids.ne(tokenizer.pad_token_id).sum())
+            total_len = int(target.ne(tokenizer.pad_token_id).sum())
 
-            turns = conversation.split(conv.sep2)
+            sep2="<|eot_id|><|start_header_id|>user<|end_header_id|>"
+
+            turns = conversation.split(sep2)
+            turns[1]=turns[0]+sep2+turns[1]
+            turns=turns[1:]
             cur_len = 1
             target[:cur_len] = IGNORE_TOKEN_ID
             for i, turn in enumerate(turns):
@@ -110,26 +121,32 @@ def build_dataset_rank(
                 turn_len = len(tokenizer(turn).input_ids)
 
                 parts = turn.split(sep)
+
+                if len(parts) == 3:
+                    parts = parts[:2]
+
                 if len(parts) != 2:
                     break
                 parts[0] += sep
                 # "-2" is hardcoded for the Llama tokenizer to make the offset correct.
-                instruction_len = len(tokenizer(parts[0]).input_ids) - 2
-
-                # if i != 0 and not tokenizer.legacy:
-                #     # The legacy and non-legacy modes handle special tokens differently
-                #     instruction_len -= 1
+                instruction_len = len(tokenizer(parts[0]).input_ids) - 1
 
                 # Ignore the user instructions
-                target[cur_len: cur_len + instruction_len] = IGNORE_TOKEN_ID
-                cur_len += turn_len
-                cur_len += 2
+                if i==0:
+                    target[cur_len : cur_len + instruction_len-2] = IGNORE_TOKEN_ID
+                else:
+                    target[cur_len-3: cur_len + instruction_len+1] = IGNORE_TOKEN_ID
 
-                if i != 0 and not tokenizer.legacy:
-                    # The legacy and non-legacy modes handle special tokens differently
-                    cur_len -= 1
+                cur_len += turn_len
+                if i!=0:
+                    cur_len+=3
 
             target[cur_len:] = IGNORE_TOKEN_ID
+
+            if cur_len < 2048:
+                # if cur_len != total_len:
+                if abs(cur_len - total_len) > 20:
+                    target[:] = IGNORE_TOKEN_ID
 
             if torch.all(target == IGNORE_TOKEN_ID):
                 continue

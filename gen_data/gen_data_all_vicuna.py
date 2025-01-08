@@ -64,7 +64,6 @@ def build_dataset_rank(
             "conversation":[],
             "input_ids": [],
             "labels": [],
-            "attention_mask": [],
         }
         for i in range(len(examples['id'])):
             conv = get_conversation_template("vicuna")
@@ -86,7 +85,6 @@ def build_dataset_rank(
             input_ids = tokenizer(
                 conversation,
                 return_tensors="pt",
-                padding="max_length",
                 max_length=tokenizer.model_max_length,
                 truncation=True,
             ).input_ids[0]
@@ -126,12 +124,12 @@ def build_dataset_rank(
 
             target[cur_len:] = IGNORE_TOKEN_ID
 
-
-
+            if torch.all(target == IGNORE_TOKEN_ID):
+                continue
+            
             new_examples["conversation"].append(conversation)
             new_examples["input_ids"].append(input_ids[None,:])
             new_examples["labels"].append(target[None,:])
-            new_examples["attention_mask"].append(input_ids.ne(tokenizer.pad_token_id)[None,:])
 
         return new_examples
 
@@ -174,7 +172,7 @@ def ge(data):
     max_prob_tokens_big = torch.argmax(outs_big.logits, dim=-1)
     probs = torch.softmax(outs_big.logits, dim=-1)
     maxp=probs[0].max(dim=1).values
-    td={"input_ids":input_ids.cpu()[0],"hidden_state":hidden_state_big.cpu()[0],"labels":data["labels"].cpu()[0],"attention_mask":data["attention_mask"].cpu()[0]}
+    td={"input_ids":input_ids.cpu()[0],"hidden_state":hidden_state_big.cpu()[0],"labels":data["labels"].cpu()[0]}
     return td
 
 outdir = f'{args.outdir}/{args.index}'
