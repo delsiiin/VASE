@@ -687,6 +687,11 @@ class RouterModel(LlamaPreTrainedModel):
 
         self.noise_alpha = 75
 
+        # eagle modified
+        self.top_k_draft = 10
+        self.total_tokens = 60
+        self.logsoftmax = nn.LogSoftmax(dim=-1)
+
         # self.router = NoisyTopkRouter(config.hidden_size, config.num_hidden_layers - config.top_layers_len, config.top_k)
 
         self.gradient_checkpointing = False
@@ -912,3 +917,170 @@ class RouterModel(LlamaPreTrainedModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
+    
+    # eagle modified
+    def topK_forward(
+            self,
+            inputs_embeds: Optional[torch.FloatTensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            past_key_values = None, # [MODIFIED] past_key_value is KVCache class
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            head = None,
+        ):
+
+        output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
+        output_hidden_states = (
+            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
+        )
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        batch_size, seq_length, _ = inputs_embeds.shape
+
+        seq_length_with_past = seq_length
+        past_key_values_length = 0
+
+        # if past_key_values is not None:
+        #     past_key_values_length = past_key_values[0][0].shape[2]
+        #     seq_length_with_past = seq_length_with_past + past_key_values_length
+
+        # [MODIFIED] past_key_values is KVCache class
+        if past_key_values is not None:
+            for past_key_value in past_key_values:
+                if past_key_value is not None:
+                    past_key_values_length = past_key_value[0].shape[2]
+                    break
+            seq_length_with_past = seq_length_with_past + past_key_values_length
+
+        if position_ids is None:
+            device = inputs_embeds.device
+            position_ids = torch.arange(
+                past_key_values_length, seq_length + past_key_values_length, dtype=torch.long, device=device
+            )
+            position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
+        else:
+            position_ids = position_ids.view(-1, seq_length).long()
+
+        # embed positions
+        if attention_mask is None:
+            attention_mask = torch.ones(
+                (batch_size, seq_length_with_past), dtype=torch.bool, device=inputs_embeds.device
+            )
+            padding_mask = None
+        else:
+            if 0 in attention_mask:
+                padding_mask = attention_mask
+            else:
+                padding_mask = None
+
+        attention_mask = self._prepare_decoder_attention_mask(
+            attention_mask, (batch_size, seq_length), inputs_embeds, past_key_values_length
+        )
+
+        inputs_embeds = self.resnet_block(inputs_embeds)
+
+        if hasattr(self, "down_proj"):
+            inputs_embeds = self.down_proj(inputs_embeds)
+
+
+        total_tokens = self.total_tokens
+        top_k = self.top_k_draft
+
+        # sample_token = input_ids[:, -1]
+
+        scores_list = []
+        parents_list = []
+        ss_token = []
+
+        # input_ids = input_ids[:, 1:]
+
+        # self.reset()
+
+        for idx, decoder_layer in enumerate(self.layers):
+
+            hidden_states = inputs_embeds
+
+            past_key_value = past_key_values[idx] if past_key_values is not None else None
+
+            if idx == 0:
+               
+                last_hidden_states = None
+
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    padding_mask=padding_mask,
+                    last_hidden_states=last_hidden_states
+                )
+
+                hidden_states = layer_outputs[0]
+
+                hidden_states = self.norm(hidden_states)
+
+                last_hidden_states = hidden_states
+
+                last_hidden = hidden_states[:, -1]
+
+                last_headout = head(self.up_proj(last_hidden))
+
+                last_p = self.logsoftmax(last_headout)
+                top = torch.topk(last_p, top_k, dim=-1)
+                topk_index, topk_p = top.indices, top.values
+
+                scores = topk_p[0]
+                scores_list.append(scores[None])
+                parents_list.append(torch.zeros(1, dtype=torch.long, device=scores.device))
+                ss_token.append(topk_index)
+                topk_cs_index = torch.arange(top_k, device=scores.device)
+
+            else:
+                
+                layer_outputs = decoder_layer(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    past_key_value=past_key_value,
+                    output_attentions=output_attentions,
+                    use_cache=use_cache,
+                    padding_mask=padding_mask,
+                    last_hidden_states=last_hidden_states
+                )
+
+                hidden_states = layer_outputs[0]
+
+                hidden_states = self.norm(hidden_states)
+
+                last_hidden_states = hidden_states
+                
+                # with Timer("sort1"):
+                bias1 = top_k if (idx-1) > 0 else 0
+                bias2 = max(0, (idx-1) - 1)
+                bias = 1 + top_k ** 2 * bias2 + bias1
+                parents = (topk_cs_index + bias)
+                parents_list.append(parents)
+
+                last_headout = head(self.up_proj(hidden_states[:, -1]))
+                last_p = self.logsoftmax(last_headout)
+
+                top = torch.topk(last_p, top_k, dim=-1)
+                topk_index, topk_p = top.indices, top.values
+
+                cu_scores = topk_p + scores[:, None]
+
+                topk_cs = torch.topk(cu_scores.view(-1), top_k, dim=-1)
+                topk_cs_index, topk_cs_p = topk_cs.indices, topk_cs.values
+                scores = topk_cs_p
+
+                ss_token.append(torch.cat([topk_index] * top_k, dim=0))
+                scores_list.append(cu_scores)
+        
+        return scores_list, parents_list, ss_token
