@@ -370,114 +370,11 @@ def ssd_tree_generate(model, model_name, tokenizer, input_ids, max_new_tokens, m
 
     return input_ids, new_token
 
-def ssd_tree_generate_new(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
-
-    if "vicuna" in model_name:
-        past_key_values, past_key_values_data, current_length_data = initialize_past_key_values(model)
-
-    model.past_key_values = past_key_values
-    model.past_key_values_data = past_key_values_data
-    model.current_length_data = current_length_data
-
-    model.current_length_data.zero_() # this is for rerun
-
-    if attn:
-        if "vicuna" in model_name:
-            past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_attn(model)
-
-        model.past_key_values_attn = past_key_values_attn
-        model.past_key_values_data_attn = past_key_values_data_attn
-        model.current_length_data_attn = current_length_data_attn
-
-        model.current_length_data_attn.zero_() # this is for rerun
-    
-    input_len = len(input_ids[0])
-    # print('Input token length:', len(input_ids[0]))
-    # print('Init KV cache shape for attention modules:', model.past_key_values[0][0].shape, model.past_key_values[0][1].shape)
-
-    # ssd_choices = ssd_vicuna_7b_v13_24_3
-
-    accept_lengths_tree = []
-    with torch.inference_mode():
-
-        new_token = 0
-
-        reset_ssd_mode(model, attn)
-
-        ssd_logits, logits, ssd_choices = initialize_ssd_tree(
-            input_ids, model, model.past_key_values, attn, model.past_key_values_attn
-        )
-
-        ssd_buffers = generate_ssd_buffers(
-            ssd_choices, device=model.device
-        )
-
-        initialize_ssd_mask(
-            model, ssd_buffers["ssd_attn_mask"], attn
-        )
-
-        cur_length = input_len + 1
-        accept_lengths_tree.append(1)
-        step = 0
-        for _ in range(max_new_tokens):
-
-            if step >= max_new_tokens:
-                break
-            
-            candidates, tree_candidates = generate_ssd_candidates(
-                ssd_logits,
-                logits,
-                ssd_buffers["tree_indices"],
-                ssd_buffers["retrieve_indices"],
-            )
-
-            ssd_logits, logits = ssd_tree_decoding(
-                model,
-                tree_candidates,
-                model.past_key_values,
-                ssd_buffers["ssd_position_ids"],
-                input_ids,
-                ssd_buffers["retrieve_indices"],
-                attn,
-                model.past_key_values_attn
-            )
-
-            best_candidate, accept_length = evaluate_posterior(
-                logits, candidates, temperature = 0, posterior_threshold = 0, posterior_alpha = 0.
-            )
-
-            input_ids, logits, ssd_logits, new_token = update_inference_inputs_ssd(
-                input_ids,
-                candidates,
-                best_candidate,
-                accept_length,
-                ssd_buffers["retrieve_indices"],
-                logits,
-                ssd_logits,
-                new_token,
-                model.past_key_values_data,
-                model.current_length_data,
-                attn,
-                model.past_key_values_data_attn,
-                model.current_length_data_attn
-            )
-
-            accept_length_tree = input_ids.shape[1] - cur_length
-            cur_length = accept_length_tree + cur_length
-            accept_lengths_tree.append(accept_length_tree)
-            step += accept_length_tree
-            if tokenizer.eos_token_id in input_ids[0, input_len:] or cur_length + new_token >= max_seq_length:
-                break
-
-    # print('Decode:', tokenizer.batch_decode(input_ids[:,input_len:]))
-
-    return input_ids, new_token
-
 from methods.ssd.model.utils_eagle import *
 
 def ssd_tree_generate_eagle(model, model_name, tokenizer, input_ids, max_new_tokens, max_seq_length, attn, device=None):
 
-    max_seq_length=max_seq_length-model.total_tokens-10
+    max_seq_length=max_seq_length-model.router.total_tokens-10
     input_ids = input_ids.clone()
 
     TEM=0
@@ -754,7 +651,7 @@ def get_model_answers(
 
                 if tree:
 
-                    output_ids, new_token = ssd_tree_generate(
+                    output_ids, new_token = ssd_tree_generate_eagle(
                         model,
                         model_name,
                         tokenizer,
