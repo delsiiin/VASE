@@ -85,20 +85,9 @@ def pad_path(path: List[int], length: int, pad_value: int = -2) -> List[int]:
     # Append the padding values to the original path and return the new list.
     return path + [pad_value] * (length - len(path))
 
-
-def initialize_ssd_ea(input_ids, model, tokenizer):
-    
-    draft_tokens, retrieve_indices,tree_mask,tree_position_ids,orig = model.topK_generate(input_ids=input_ids, past_key_values=model.past_key_values, past_key_values_attn=model.past_key_values_attn, tokenizer=tokenizer)
-    
-    next_topk_past_key_values = copy.deepcopy(model.past_key_values)
-    next_topk_past_key_values_attn = copy.deepcopy(model.past_key_values_attn)
-
-    return draft_tokens, retrieve_indices,tree_mask,tree_position_ids, orig, next_topk_past_key_values, next_topk_past_key_values_attn
-
-
 def initialize_ssd_ea_hid(input_ids, model, logits_processor):
 
-    _, orig, hidden_states = model(input_ids, output_orig = True, base_mode = True, past_key_values=model.past_key_values)
+    _, orig, hidden_states = model.tree_forward(input_ids, output_orig = True, past_key_values=model.past_key_values)
     
     draft_tokens, retrieve_indices,tree_mask,tree_position_ids = model.topK_generate(hidden_states=hidden_states, past_key_values_attn=model.past_key_values_attn, orig=orig, logits_processor=logits_processor)
 
@@ -134,29 +123,6 @@ def reset_past_key_values(passed_key_values: List[torch.Tensor]) -> List[torch.T
             passed_key_values[i][j].current_length.fill_(0)
     return passed_key_values
 
-
-def ssd_tree_decoding_ea(
-        model,
-        tree_candidates,
-        tree_position_ids,
-        input_ids,
-        retrieve_indices,
-):
-    position_ids = tree_position_ids + input_ids.shape[1]
-
-    tree_ssd_logits, _, tree_logits = model(
-        tree_candidates,
-        output_orig=True,
-        past_key_values=model.past_key_values,
-        position_ids=position_ids,
-        past_key_values_attn=model.past_key_values_attn,
-    )
-    
-    logits = tree_logits[0, retrieve_indices]
-    tree_ssd_logits = tree_ssd_logits[:, 0, retrieve_indices]
-
-    return tree_ssd_logits, logits
-
 def ssd_tree_decoding_ea_hid(
         model,
         tree_candidates,
@@ -166,10 +132,9 @@ def ssd_tree_decoding_ea_hid(
 ):
     position_ids = tree_position_ids + input_ids.shape[1]
 
-    _, tree_logits, hidden_states = model(
+    _, tree_logits, hidden_states = model.tree_forward(
         tree_candidates,
         output_orig=True,
-        base_mode=True,
         past_key_values=model.past_key_values,
         position_ids=position_ids,
     )
@@ -256,69 +221,6 @@ def evaluate_posterior_ea(
             gt_logits = logits[best_candidate, accept_length - 1]
             sample_p = torch.softmax(gt_logits, dim=0)
         return torch.tensor(best_candidate), accept_length - 1, sample_p[None, None]
-
-
-@torch.no_grad()
-def update_inference_inputs_ssd_ea(
-        input_ids,
-        candidates,
-        best_candidate,
-        accept_length,
-        retrieve_indices,
-        new_token,
-        model,
-        tokenizer,
-        next_topk_past_key_values,
-        next_topk_past_key_values_attn,
-):
-
-    prev_input_len = input_ids.shape[1]
-    # Map the best candidate indices to the original indices in the sequence
-    select_indices = (
-            retrieve_indices[best_candidate, : accept_length + 1] + prev_input_len
-    )
-
-    # Append the tokens from the best candidate to the input sequence
-    input_ids = torch.cat(
-        [input_ids, candidates[None, best_candidate, : accept_length + 1].to(input_ids.device)], dim=-1
-    )
-    
-    # Update the past key values based on the selected tokens
-    # Source tensor that contains relevant past information based on the selected candidate
-    tgt = model.past_key_values_data[..., select_indices, :]
-    # Destination tensor where the relevant past information will be stored
-    dst = model.past_key_values_data[..., prev_input_len : prev_input_len + tgt.shape[-2], :]
-    # Copy relevant past information from the source to the destination
-    dst.copy_(tgt, non_blocking=True)
-
-    # Update the current length tensor (currently only support batch size is 1)
-    model.current_length_data.fill_(prev_input_len + tgt.shape[-2])
-
-    # Update the past key values based on the selected tokens
-    # Source tensor that contains relevant past information based on the selected candidate
-    tgt_attn = model.past_key_values_data_attn[..., select_indices, :]
-    # Destination tensor where the relevant past information will be stored
-    dst_attn = model.past_key_values_data_attn[
-        ..., prev_input_len : prev_input_len + tgt_attn.shape[-2], :
-    ]
-    # Copy relevant past information from the source to the destination
-    dst_attn.copy_(tgt_attn, non_blocking=True)
-
-    # Update the current length tensor (currently only support batch size is 1)
-    model.current_length_data_attn.fill_(prev_input_len + tgt_attn.shape[-2])
-
-    # hidden_state = torch.cat((hidden_state, accept_hidden_state_new), dim=1)
-    model.base_model.model.ssd_mask = None
-    model.router.ssd_mask = None
-
-    # draft_tokens, retrieve_indices,tree_mask,tree_position_ids,orig = model.topK_generate(input_ids=input_ids, past_key_values=None, past_key_values_attn=None, tokenizer=tokenizer)
-
-    draft_tokens, retrieve_indices,tree_mask,tree_position_ids,orig = model.topK_generate(input_ids=candidates[None, best_candidate, : accept_length + 1], past_key_values=next_topk_past_key_values, past_key_values_attn=next_topk_past_key_values_attn, tokenizer=tokenizer)
-
-    new_token += accept_length + 1
-
-    return input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token
-
 
 @torch.no_grad()
 def update_inference_inputs_ssd_ea_hid(
