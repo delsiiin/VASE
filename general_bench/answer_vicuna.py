@@ -651,7 +651,7 @@ def get_model_answers(
 
                 if tree:
 
-                    output_ids, new_token = ssd_tree_generate_eagle(
+                    output_ids, new_token = ssd_tree_generate(
                         model,
                         model_name,
                         tokenizer,
