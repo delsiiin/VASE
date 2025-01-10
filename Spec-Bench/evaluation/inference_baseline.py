@@ -14,7 +14,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 def baseline_forward(inputs, model, tokenizer, max_new_tokens, temperature=0.0, do_sample=False, model_id=None):
 
     input_ids = inputs.input_ids
-    if "llama3" in model_id:
+    if model_id is not None and "llama3" in model_id:
         output_ids = model.generate(
             input_ids,
             do_sample=do_sample,
