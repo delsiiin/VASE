@@ -69,7 +69,7 @@ def main(args):
             model.past_key_values_attn = past_key_values_attn
             model.past_key_values_data_attn = past_key_values_data_attn
             model.current_length_data_attn = current_length_data_attn
-    elif "llama2" in args.model_name:
+    elif "llama" in args.model_name:
         past_key_values, past_key_values_data, current_length_data = initialize_past_key_values_llama(model)
         model.past_key_values = past_key_values
         model.past_key_values_data = past_key_values_data
@@ -99,6 +99,23 @@ def main(args):
             conv.append_message(conv.roles[0], sample["instruction"])
             conv.append_message(conv.roles[1], "")
             prompt = conv.get_prompt() + " "
+        elif "llama3" in args.model_name:
+            messages = [
+                {"role": "system",
+                 "content": "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."},
+            ]
+            convroles=["user","assistant"]
+            messages.append(
+                {"role": convroles[0], "content": sample["instruction"]}
+            )
+            messages.append(
+                {"role": convroles[1], "content": ""}
+            )
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
         steps = args.steps
         logits_ids = []
         ssd_topk_ids = []
