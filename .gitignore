@@ -160,10 +160,10 @@ cython_debug/
 #.idea/
 
 
-.gen_data/train_data*
-.gen_tree/data/
-.general_bench/result/
-.Spec-Bench/data/
-.train/ssd_models/
-.train/wandb/
-.LongBench/LongBench/
+gen_data/train_data*
+gen_tree/data/
+general_bench/result/
+Spec-Bench/data/
+train/ssd_models/
+train/wandb/
+LongBench/LongBench/
