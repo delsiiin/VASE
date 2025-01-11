@@ -324,6 +324,112 @@ def ssd_forward_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=N
     return input_ids, new_token, idx+1, accept_length_list
 
 
+def ssd_forward_eagle_llama(inputs, model, tokenizer, max_new_tokens, medusa_choices=None, temperature=0.0, posterior_threshold=0.09, posterior_alpha=0.3, max_steps=512, model_id=None):
+    
+    max_length=2048-model.router.total_tokens-10
+
+    if "llama3" in model_id:
+        stop_token_id = tokenizer.convert_tokens_to_ids("<|eot_id|>")
+    
+    input_ids = inputs.input_ids
+    assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
+    # Avoid modifying the input_ids in-place
+    input_ids = input_ids.clone()
+    accept_length_list = []
+
+    # Initialize the past key and value states
+    if hasattr(model, "past_key_values"):
+        past_key_values = model.past_key_values
+        past_key_values_data = model.past_key_values_data
+        current_length_data = model.current_length_data
+        # Reset the past key and value states
+        current_length_data.zero_()
+
+        past_key_values_attn = model.past_key_values_attn
+        past_key_values_data_attn = model.past_key_values_data_attn
+        current_length_data_attn = model.current_length_data_attn
+        # Reset the past key and value states
+        current_length_data_attn.zero_()
+    else:
+        (
+            past_key_values,
+            past_key_values_data,
+            current_length_data,
+        ) = initialize_past_key_values_llama(model)
+        model.past_key_values = past_key_values
+        model.past_key_values_data = past_key_values_data
+        model.current_length_data = current_length_data
+
+        past_key_values_attn, past_key_values_data_attn, current_length_data_attn = initialize_past_key_values_llama_attn(model)
+
+        model.past_key_values_attn = past_key_values_attn
+        model.past_key_values_data_attn = past_key_values_data_attn
+        model.current_length_data_attn = current_length_data_attn
+
+    padding=torch.zeros((1,1), dtype=torch.long, device=input_ids.device)
+
+    input_len = input_ids.shape[1]
+    cur_length = input_len
+    reset_ssd_mode_ea(model, True)
+
+    if temperature > 1e-5:
+        logits_processor = prepare_logits_processor(temperature=temperature, top_p=0, top_k=0)
+    else:
+        logits_processor = None
+    
+    new_token = 0
+
+    draft_tokens, retrieve_indices,tree_mask,tree_position_ids, logits, hidden_states = initialize_ssd_ea_hid(
+        input_ids, model, logits_processor
+    )
+    
+    for idx in range(max_steps): # idx: new decoding steps
+        model.base_model.model.ssd_mask = tree_mask
+        model.router.ssd_mask = tree_mask
+
+        draft_tokens=draft_tokens.to(input_ids.device)
+        
+        logits, hidden_states_new = ssd_tree_decoding_ea_hid(
+                model,
+                draft_tokens,
+                tree_position_ids,
+                input_ids,
+                retrieve_indices,
+            )
+        draft_tokens=torch.cat((draft_tokens, padding),dim=1)
+        candidates=draft_tokens[0,retrieve_indices]
+
+        best_candidate, accept_length, sample_p = evaluate_posterior_ea(
+                logits, candidates, logits_processor=logits_processor
+            )
+        input_ids, draft_tokens, retrieve_indices,tree_mask,tree_position_ids, new_token = update_inference_inputs_ssd_ea_hid(
+                input_ids,
+                candidates,
+                best_candidate,
+                accept_length,
+                retrieve_indices,
+                new_token,
+                model,
+                hidden_states_new,
+                sample_p,
+                logits_processor
+            )
+        accept_length_tree = input_ids.shape[1] - cur_length
+        cur_length = accept_length_tree + cur_length
+        accept_length_list.append(accept_length_tree)
+        if "llama3" in model_id:
+            if stop_token_id in input_ids[0, input_len:].tolist():
+                break
+        else:
+            if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
+                break
+        if new_token > max_new_tokens:
+            break
+        if input_ids.shape[1] > max_length:
+            break
+    return input_ids, new_token, idx+1, accept_length_list
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(

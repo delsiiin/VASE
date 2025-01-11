@@ -689,7 +689,7 @@ class RouterModel(LlamaPreTrainedModel):
 
         # eagle modified
         self.top_k_draft = 10
-        self.total_tokens = 60
+        self.total_tokens = 24
         self.logsoftmax = nn.LogSoftmax(dim=-1)
 
         # self.router = NoisyTopkRouter(config.hidden_size, config.num_hidden_layers - config.top_layers_len, config.top_k)

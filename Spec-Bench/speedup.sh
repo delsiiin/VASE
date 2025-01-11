@@ -53,3 +53,10 @@ python evaluation/speed.py \
         --file-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/llama2-13b-chat-ssd-float16-temperature-0.0.jsonl \
         --base-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/llama2-13b-chat-vanilla-float16-temp-0.0.jsonl \
         --tokenizer-path /root/MODELS/Llama-2-13b-chat-hf
+
+# llama3 8b
+# SSD
+python evaluation/speed.py \
+        --file-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/llama3-8b-inst-ssd-float16-temperature-0.0.jsonl \
+        --base-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/llama3-8b-inst-vanilla-float16-temp-0.0.jsonl \
+        --tokenizer-path /root/MODELS/Meta-Llama-3-8B-Instruct
