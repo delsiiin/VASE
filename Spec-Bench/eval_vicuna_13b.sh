@@ -24,8 +24,8 @@ torch_dtype="float16" # ["float32", "float64", "float16", "bfloat16"]
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} RAYON_NUM_THREADS=6 python -m evaluation.inference_rest --model-path $Vicuna_PATH --model-id ${MODEL_NAME}-rest-${torch_dtype} --datastore-path $datastore_PATH --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_hydra --model-path $Hydra_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-hydra-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_space --model-path $Space_PATH --model-id ${MODEL_NAME}-space-${torch_dtype}-temp-${TEMP} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
-CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_kangaroo --model-path $Kangaroo_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-kangaroo-${torch_dtype} --bench-name $bench_NAME --dtype $torch_dtype 
+# CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_kangaroo --model-path $Kangaroo_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-kangaroo-${torch_dtype} --bench-name $bench_NAME --dtype $torch_dtype 
 
 
-# CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_ssd --model-path $SSD_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-ssd-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype 
+CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_ssd --model-path $SSD_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-ssd-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype 
 
