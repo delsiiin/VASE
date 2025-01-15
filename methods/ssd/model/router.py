@@ -983,16 +983,12 @@ class RouterModel(LlamaPreTrainedModel):
         # input_ids = input_ids[:, 1:]
 
         # self.reset()
-
+        hidden_states = inputs_embeds
         for idx, decoder_layer in enumerate(self.layers):
-
-            hidden_states = inputs_embeds
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
             if idx == 0:
-               
-                last_hidden_states = None
 
                 layer_outputs = decoder_layer(
                     hidden_states,
@@ -1002,16 +998,13 @@ class RouterModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     padding_mask=padding_mask,
-                    last_hidden_states=last_hidden_states
                 )
 
                 hidden_states = layer_outputs[0]
 
-                hidden_states = self.norm(hidden_states)
+                draft_hidden_states = self.norm(hidden_states)
 
-                last_hidden_states = hidden_states
-
-                last_hidden = hidden_states[:, -1]
+                last_hidden = draft_hidden_states[:, -1]
 
                 last_headout = head(self.up_proj(last_hidden))
 
@@ -1035,14 +1028,11 @@ class RouterModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     padding_mask=padding_mask,
-                    last_hidden_states=last_hidden_states
                 )
 
                 hidden_states = layer_outputs[0]
 
-                hidden_states = self.norm(hidden_states)
-
-                last_hidden_states = hidden_states
+                draft_hidden_states = self.norm(hidden_states)
                 
                 # with Timer("sort1"):
                 bias1 = top_k if (idx-1) > 0 else 0
@@ -1051,7 +1041,7 @@ class RouterModel(LlamaPreTrainedModel):
                 parents = (topk_cs_index + bias)
                 parents_list.append(parents)
 
-                last_headout = head(self.up_proj(hidden_states[:, -1]))
+                last_headout = head(self.up_proj(draft_hidden_states[:, -1]))
                 last_p = self.logsoftmax(last_headout)
 
                 top = torch.topk(last_p, top_k, dim=-1)
