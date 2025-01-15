@@ -263,6 +263,7 @@ class LlamaAttention(nn.Module):
         output_attentions: bool = False,
         use_cache: bool = False,
         padding_mask: Optional[torch.LongTensor] = None,
+        last_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -285,8 +286,12 @@ class LlamaAttention(nn.Module):
 
         else:
             query_states = self.q_proj(hidden_states)
-            key_states = self.k_proj(hidden_states)
-            value_states = self.v_proj(hidden_states)
+            if last_hidden_states is None:
+                key_states = self.k_proj(hidden_states)
+                value_states = self.v_proj(hidden_states)
+            else:
+                key_states = self.k_proj(last_hidden_states)
+                value_states = self.v_proj(last_hidden_states)
 
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -555,6 +560,7 @@ class LlamaDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         padding_mask: Optional[torch.LongTensor] = None,
+        last_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -573,6 +579,8 @@ class LlamaDecoderLayer(nn.Module):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
+        if last_hidden_states is not None:
+            last_hidden_states = self.input_layernorm(last_hidden_states)
 
         # Self Attention
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
@@ -583,6 +591,7 @@ class LlamaDecoderLayer(nn.Module):
             output_attentions=output_attentions,
             padding_mask=padding_mask,
             use_cache=use_cache,
+            last_hidden_states=last_hidden_states,
         )
         
         hidden_states = residual + hidden_states
@@ -829,8 +838,10 @@ class RouterModel(LlamaPreTrainedModel):
         #     noise = (torch.rand_like(inputs_embeds) * 2 - 1) * self.noise_alpha / denom
         #     noise = noise.to(inputs_embeds.dtype)
         #     inputs_embeds = inputs_embeds + noise
-        hidden_states = inputs_embeds
+        
         for idx, decoder_layer in enumerate(self.layers):
+
+            hidden_states = inputs_embeds
 
             # print(inputs_embeds.shape)
 
@@ -838,12 +849,15 @@ class RouterModel(LlamaPreTrainedModel):
     
             past_key_value = past_key_values[idx] if past_key_values is not None else None
 
+            if idx == 0:
+                last_hidden_states = None
+
             if self.gradient_checkpointing and self.training:
                     
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
                         # None for past_key_value
-                        return module(*inputs, past_key_value, output_attentions, padding_mask=padding_mask)
+                        return module(*inputs, past_key_value, output_attentions, padding_mask=padding_mask, last_hidden_states=last_hidden_states)
 
                     return custom_forward
             
@@ -861,6 +875,7 @@ class RouterModel(LlamaPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     padding_mask=padding_mask,
+                    last_hidden_states=last_hidden_states
                 )
 
             hidden_states = layer_outputs[0]
@@ -868,9 +883,11 @@ class RouterModel(LlamaPreTrainedModel):
             if use_cache:
                 next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
 
-            draft_hidden_states = self.norm(hidden_states)
+            hidden_states = self.norm(hidden_states)
 
-            all_draft_hidden_states.append(draft_hidden_states)
+            last_hidden_states = hidden_states
+
+            all_draft_hidden_states.append(hidden_states)
 
         all_draft_hidden_states = torch.stack(all_draft_hidden_states, dim=0)
 
