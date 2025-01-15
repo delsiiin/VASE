@@ -165,5 +165,6 @@ gen_tree/data/
 general_bench/result/
 Spec-Bench/data/
 train/ssd_models/
+train/ssd_models_ablation/
 train/wandb/
 LongBench/LongBench/
