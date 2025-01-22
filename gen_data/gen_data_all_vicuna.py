@@ -154,11 +154,20 @@ bigtokenizer = AutoTokenizer.from_pretrained(bigname,use_fast=False)
 ds = build_dataset_rank(bigtokenizer)
 print(ds)
 
+quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+    )
+
 bigmodel = AutoModelForCausalLM.from_pretrained(
     bigname,  
     device_map="auto",
     torch_dtype=torch.float16,
     load_in_8bit=True if "13" in bigname else False,
+    quantization_config=quantization_config if "33" in bigname else None,
+    load_in_4bit=True if "33" in bigname else False,
 )
 bigmodel.eval()
 
