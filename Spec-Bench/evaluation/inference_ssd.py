@@ -552,6 +552,8 @@ if __name__ == "__main__":
         from evaluation.eval_llama3 import run_eval
         forward_func = ssd_forward_llama
 
+    posterior_alpha = args.posterior_threshold ** 0.5
+
     run_eval(
         model=model,
         tokenizer=tokenizer,
@@ -569,7 +571,7 @@ if __name__ == "__main__":
         max_steps=args.max_steps,
         temperature=args.temperature,
         posterior_threshold=args.posterior_threshold,
-        posterior_alpha=args.posterior_alpha,
+        posterior_alpha=posterior_alpha,
     )
 
     reorg_answer_file(answer_file)
