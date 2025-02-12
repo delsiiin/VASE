@@ -40,6 +40,20 @@ python evaluation/speed.py \
         --base-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/vicuna-13b-v1.3-vanilla-float16-temp-0.0.jsonl \
         --tokenizer-path /root/MODELS/vicuna-13b-v1.3 
 
+# vicuna 33b
+# SSD
+python evaluation/speed.py \
+        --file-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/vicuna-33b-v1.3-ssd-float16-temperature-0.0.jsonl \
+        --base-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/vicuna-33b-v1.3-vanilla-float16-temp-0.0.jsonl \
+        --tokenizer-path /root/MODELS/vicuna-33b-v1.3 
+
+# vicuna 33b
+# Medusa
+python evaluation/speed.py \
+        --file-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/vicuna-33b-v1.3-medusa-float16-temperature-0.0.jsonl \
+        --base-path /root/idea/speculative_decoding/VASE/Spec-Bench/data/spec_bench/model_answer/vicuna-33b-v1.3-vanilla-float16-temp-0.0.jsonl \
+        --tokenizer-path /root/MODELS/vicuna-33b-v1.3 
+
 # llama2 7b
 # SSD
 python evaluation/speed.py \
