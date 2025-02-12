@@ -1,5 +1,5 @@
-WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 main.py --model_name_or_path /root/MODELS/vicuna-13b-v1.3 \
-    --data_path /root/idea/speculative_decoding/VASE/gen_data/train_data_vicuna13b \
+WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 main.py --model_name_or_path /root/MODELS/vicuna-33b-v1.3 \
+    --data_path /root/idea/speculative_decoding/VASE/gen_data/train_data_vicuna33b \
     --bf16 True \
     --output_dir ssd_models/ \
     --num_train_epochs 4 \
@@ -21,6 +21,6 @@ WANDB_MODE="offline" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 main.p
     --top_layers_len 24 \
     --top_k_group 3 \
     --resnet_num 1 \
-    --attn_hid_dim 1280  \
+    --attn_hid_dim 1664  \
     --ssd_decay_coefficient 0.8 \
     --model_type vicuna 
