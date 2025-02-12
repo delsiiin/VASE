@@ -4,7 +4,7 @@ Medusa_PATH=/root/MODELS/medusa-vicuna-7b-v1.3
 Hydra_PATH=/your_own_path/hydra-vicuna-7b-v1.3
 Drafter_PATH=/your_own_path/vicuna-68m
 Space_PATH=/your_own_path/vicuna-v1.3-7b-space
-SSD_PATH=/root/idea/speculative_decoding/VASE/train/ssd_models/vicuna-7b-v1.3_ssd_3_lr_0.002_dim_1024
+SSD_PATH=/root/idea/speculative_decoding/VASE/train/ssd_models_ablation/vicuna-7b-v1.3_ssd_3_lr_0.002_dim_1024
 Kangaroo_PATH=/root/MODELS/kangaroo-vicuna-7b-v1.3
 datastore_PATH=./model/rest/datastore/datastore_chat_large.idx
 MODEL_NAME=vicuna-7b-v1.3
@@ -28,3 +28,6 @@ torch_dtype="float16" # ["float32", "float64", "float16", "bfloat16"]
 
 CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_ssd --model-path $SSD_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-ssd-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype 
 
+# for threshold in $(seq 0.01 0.01 0.25); do
+#     CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_ssd --model-path $SSD_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-ssd-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype --posterior-threshold $threshold
+# done

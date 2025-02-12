@@ -1,14 +1,15 @@
-Vicuna_PATH=/root/MODELS/Meta-Llama-3-8B-Instruct
+Vicuna_PATH=/root/MODELS/vicuna-33b-v1.3
 Eagle_PATH=/your_own_path/EAGLE-Vicuna-7B-v1.3
-Medusa_PATH=/root/MODELS/medusa-vicuna-7b-v1.3
+Medusa_PATH=/root/MODELS/medusa-vicuna-13b-v1.3
 Hydra_PATH=/your_own_path/hydra-vicuna-7b-v1.3
 Drafter_PATH=/your_own_path/vicuna-68m
 Space_PATH=/your_own_path/vicuna-v1.3-7b-space
-SSD_PATH=/root/idea/speculative_decoding/VASE/train/ssd_models_ablation/Meta-Llama-3-8B-Instruct_ssd_3_lr_0.002_dim_1024
+SSD_PATH=/root/idea/speculative_decoding/VASE/train/ssd_models_ablation/vicuna-33b-v1.3_ssd_3_lr_0.002_dim_1664
+Kangaroo_PATH=/root/MODELS/kangaroo-vicuna-13b-v1.3
 datastore_PATH=./model/rest/datastore/datastore_chat_large.idx
-MODEL_NAME=llama3-8b-inst
+MODEL_NAME=vicuna-33b-v1.3
 TEMP=0.0
-GPU_DEVICES=0
+GPU_DEVICES=0,1,2,3
 
 bench_NAME="spec_bench"
 torch_dtype="float16" # ["float32", "float64", "float16", "bfloat16"]
@@ -23,6 +24,8 @@ torch_dtype="float16" # ["float32", "float64", "float16", "bfloat16"]
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} RAYON_NUM_THREADS=6 python -m evaluation.inference_rest --model-path $Vicuna_PATH --model-id ${MODEL_NAME}-rest-${torch_dtype} --datastore-path $datastore_PATH --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_hydra --model-path $Hydra_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-hydra-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
 # CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_space --model-path $Space_PATH --model-id ${MODEL_NAME}-space-${torch_dtype}-temp-${TEMP} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype
+# CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_kangaroo --model-path $Kangaroo_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-kangaroo-${torch_dtype} --bench-name $bench_NAME --dtype $torch_dtype 
+
 
 CUDA_VISIBLE_DEVICES=${GPU_DEVICES} python -m evaluation.inference_ssd --model-path $SSD_PATH --base-model $Vicuna_PATH --model-id ${MODEL_NAME}-ssd-${torch_dtype} --bench-name $bench_NAME --temperature $TEMP --dtype $torch_dtype 
 
